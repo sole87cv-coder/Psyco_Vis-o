@@ -23,7 +23,7 @@ O botão **Copiar endereço** ajuda a compartilhar o link Vercel. Se abrir esse 
 
 ## Privacidade e limites
 
-O site não envia imagem ou áudio para um servidor. Câmera e análise de áudio acontecem no navegador local. O microfone é opcional. Esta versão é uma demonstração Canvas 2D: não implementa pipeline nativo 100% GPU, MediaPipe, WebRTC, servidor de sinalização ou os apps MAUI Android/iOS. Os números de FPS/resolução são ilustrativos.
+O site não envia imagem ou áudio para um servidor. Câmera e análise de áudio acontecem no navegador local. O microfone é opcional e ativado na aba Sistema em “Reagir ao som”. A cada frame visual, o navegador lê um bloco de 1024 amostras (cerca de 21–23 ms), calcula RMS e pico, lê as bandas de frequência da FFT interna do `AnalyserNode` e calibra o ruído ambiente nos primeiros 3 segundos. Graves aceleram e centralizam os ecos; agudos deixam os anéis mais espessos e nascem alternadamente nas laterais; a frequência dominante colore o pulso; transientes fortes reduzem o intervalo entre ecos. Sons contínuos elevam a respiração e o brilho do fundo. A linha de diagnóstico mostra nível, banda dominante e ecos ativos. O navegador executa sua própria janela espectral (Blackman) e mantém a análise sincronizada por snapshot no frame de render. Esta versão é uma demonstração Canvas 2D: não implementa pipeline nativo 100% GPU, MediaPipe, WebRTC, servidor de sinalização ou os apps MAUI Android/iOS. Os números de FPS/resolução são ilustrativos.
 
 ## Arquivos
 
@@ -32,3 +32,9 @@ O site não envia imagem ou áudio para um servidor. Câmera e análise de áudi
 - `README.md` — estas instruções.
 
 O caminho local informado não apresentou metadados `.git` durante a verificação. O Vercel só poderá acompanhar envios automáticos quando esta pasta estiver conectada a um repositório GitHub.
+
+## Diagnóstico do microfone
+
+Na aba **Sistema**, ative **Reagir ao som** e permita o microfone. Na aba **Eco**, ajuste a sensibilidade, o gate de ruído e a suavização RMS. A captura usa `getUserMedia` e um `AnalyserNode` com FFT de 1024 amostras. O painel mostra nível, banda, ecos e leituras por segundo; o Console do navegador registra captura, RMS, pico, bandas e erros de permissão duas vezes por segundo. Se o RMS continuar em zero, confirme a permissão do site, selecione um microfone ativo no sistema e recarregue a página HTTPS.
+
+A demonstração roda toda a análise e desenho no navegador. Não há `AudioRecord`, thread MAUI, GLSL ou uniforms OpenGL neste repositório; os valores de áudio alimentam diretamente o render Canvas em cada frame. O reforço da revelação aumenta a opacidade da imagem durante os ecos, sem implementar uma máscara de segmentação real.
