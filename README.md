@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Psyco_Visão
 
 Experiência web responsiva da obra **“um dispositivo para ver através do sono”**. A página prioriza celular, preserva a imagem em vídeo e inicia em **SUTIL**. Câmera e análise opcional de áudio rodam localmente no navegador.
@@ -63,3 +64,7 @@ O projeto é estático: `index.html`, CSS e módulos JavaScript são publicados 
 - Output Directory: `.`.
 
 O arquivo `vercel.json` define **Other**, a saída na raiz e mantém a remoção de `.html` e barra final. A conexão com GitHub, a branch de produção, o domínio e as regras de implantação pertencem ao painel da conta Vercel; esta preparação não cria o projeto nem publica o site.
+=======
+# Psyco_Vis-o
+Interative Art.
+>>>>>>> 83aff552a8067f569bd10b984e7c985c1a083b71
