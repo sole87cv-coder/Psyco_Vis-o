@@ -1,40 +1,65 @@
-# WebUruTao
+# Psyco_Visão
 
-Protótipo web responsivo da obra **“um dispositivo para ver através do sono”**. A experiência prioriza celular e também se ajusta a tablet e laptop.
+Experiência web responsiva da obra **“um dispositivo para ver através do sono”**. A página prioriza celular, preserva a imagem em vídeo e inicia em **SUTIL**. Câmera e análise opcional de áudio rodam localmente no navegador.
 
-## Publicar e testar no Vercel
+## Executar e publicar manualmente
 
-1. No painel do Vercel, escolha **Add New → Project** e importe do GitHub o repositório que contém estes arquivos. Se a pasta local ainda não estiver conectada ao GitHub, crie/associe o repositório antes da importação.
-2. Mantenha **Framework Preset: Other**. Não há build command nem pasta de saída: `index.html` é um site estático.
-3. Clique em **Deploy** e abra o endereço `https://…vercel.app` no celular. A configuração estática `vercel.json` já está incluída.
-4. Ao abrir em HTTPS, o navegador pede permissão de câmera e tenta ativá-la automaticamente. Permita o acesso. O microfone é opcional; se a permissão não for concedida, a câmera ainda funciona. Se o navegador bloquear o início automático, toque em **Adormecer** no painel.
+Use um servidor local em `localhost` (por exemplo, Live Server) ou publique os arquivos estáticos manualmente no Vercel. O endereço publicado deve usar HTTPS para permitir câmera e microfone. Não há etapa de build: `index.html` é a entrada. Esta documentação não realiza publicação.
 
-Para teste local, use `localhost` (por exemplo, a extensão Live Server do VS Code). Abrir como `file://` não dá ao navegador acesso à câmera. Toque na tela para abrir os controles; eles recolhem após alguns segundos. Em **Sonho**, escolha silhueta onírica, contorno luminoso, ambos ou ecos abstratos. Os controles de intensidade ficam guardados no navegador.
+Ao abrir a página, o navegador solicita acesso à câmera; a captura só inicia após a permissão. O microfone é opcional e pode ser ligado em Ajustes. Os controles e o nível de vídeo são guardados no armazenamento local deste navegador. A câmera não é enviada a outro aparelho pelo site; para exibir o celular numa TV, use o espelhamento de tela do próprio sistema.
 
-## Espelhar o vídeo em outro dispositivo
+## Testar no laptop e no celular
 
-Mantenha a página aberta e a câmera ativa no aparelho transmissor. Conecte os aparelhos à mesma rede Wi-Fi e use o espelhamento de tela do sistema:
+**Laptop:** dê duplo clique em `Testar-Psyco_Visão.bat`. O script local usa Python 3 sem instalar bibliotecas, escolhe uma porta livre, inicia o servidor em `127.0.0.1` e abre o navegador. Permita a câmera quando solicitado. Deixe a janela do servidor aberta durante o teste; feche-a ou pressione `Ctrl+C` para parar. Se o Windows não encontrar Python, abra a pasta no VS Code e use **Go Live**.
 
-- **Android → TV:** abra as Configurações rápidas e toque em **Transmitir**, **Smart View** ou **Espelhamento de tela**; selecione a TV/Chromecast.
-- **iPhone/iPad → Apple TV:** abra a Central de Controle, toque em **Espelhamento de Tela** e selecione a Apple TV.
-- **Laptop → Chromecast/TV:** no Chrome/Edge, abra o menu e escolha **Transmitir**; transmita a aba do navegador com o WebUruTao.
+Na aba **Sistema**, toque em **Verificar este aparelho** para ver formato da tela, ligação segura, Canvas, câmera, microfone, toque, movimento reduzido e armazenamento. **Tentar câmera** solicita acesso novamente. Os sliders e presets podem ser conferidos na própria interface.
 
-O botão **Copiar endereço** ajuda a compartilhar o link Vercel. Se abrir esse endereço diretamente na TV, ela mostrará a página, mas pedirá acesso à própria câmera. Para mostrar a imagem do celular, use o espelhamento iniciado no celular. Esta versão não implementa WebRTC entre dispositivos.
+**Celular/tablet com câmera:** `localhost` no laptop aponta para o próprio laptop; um endereço LAN por HTTP pode abrir a página no telefone, mas não é confiável para a câmera em muitos navegadores. Para testar câmera e microfone no aparelho, use um endereço HTTPS. A opção segura sem alterar o site principal é enviar manualmente uma branch de prévia ao GitHub conectado ao Vercel e abrir a Preview URL gerada no celular. Mantenha as alterações fora da branch de produção até terminar os testes. O painel de diagnóstico do mesmo `index.html` mostra se o navegador recebeu um contexto seguro.
 
-## Privacidade e limites
+## Compatibilidade e limites
 
-O site não envia imagem ou áudio para um servidor. Câmera e análise de áudio acontecem no navegador local. O microfone é opcional e ativado na aba Sistema em “Reagir ao som”. A cada frame visual, o navegador lê um bloco de 1024 amostras (cerca de 21–23 ms), calcula RMS e pico, lê as bandas de frequência da FFT interna do `AnalyserNode` e calibra o ruído ambiente nos primeiros 3 segundos. Graves aceleram e centralizam os ecos; agudos deixam os anéis mais espessos e nascem alternadamente nas laterais; a frequência dominante colore o pulso; transientes fortes reduzem o intervalo entre ecos. Sons contínuos elevam a respiração e o brilho do fundo. A linha de diagnóstico mostra nível, banda dominante e ecos ativos. O navegador executa sua própria janela espectral (Blackman) e mantém a análise sincronizada por snapshot no frame de render. Esta versão é uma demonstração Canvas 2D: não implementa pipeline nativo 100% GPU, MediaPipe, WebRTC, servidor de sinalização ou os apps MAUI Android/iOS. Os números de FPS/resolução são ilustrativos.
+Requer navegador moderno com módulos ES, Canvas 2D e `getUserMedia`; câmera e microfone precisam de contexto seguro (HTTPS ou localhost). O modo visual usa Canvas 2D e filtros, sem WebGL/GLSL, MediaPipe ou segmentação de pessoas. O recorte baseado em movimento é uma heurística artística, não identifica pessoas. Em dispositivos modestos, resolução e leitura de movimento diminuem adaptativamente. Permissões, políticas de autoplay e disponibilidade dos dispositivos dependem do navegador e sistema operacional.
 
-## Arquivos
+## Estrutura
 
-- `index.html` — interface e demonstração.
-- `vercel.json` — configuração de hospedagem estática.
-- `README.md` — estas instruções.
+- `index.html`: marcação, conteúdo e controles acessíveis.
+- `styles.css`: layout, responsividade, estados e movimento reduzido.
+- `app.js`: inicialização, estado de sessão e coordenação do loop visual.
+- `config.js`: perfis, níveis de vídeo e qualidade adaptativa.
+- `camera.js`: mensagens de erro, restrições e utilidades de dispositivos.
+- `audio.js`: cálculo das bandas e nível de sinal a partir dos buffers do navegador.
+- `ui.js`: atualização de controles, rótulos e níveis de vídeo.
+- `presets.js`: valores e aplicação dos quatro presets.
+- `motion.js`: análise de diferença entre quadros e máscara de movimento.
+- `shaders.js`: perfis de composição visual por modo e preset.
+- `renderers.js`: composição reutilizável de camadas no Canvas.
+- `utils.js`: limites numéricos e acesso seguro ao armazenamento local.
+- `SHADERS.md`: catálogo visual e guia para evolução de efeitos.
 
-O caminho local informado não apresentou metadados `.git` durante a verificação. O Vercel só poderá acompanhar envios automáticos quando esta pasta estiver conectada a um repositório GitHub.
+## Presets e extensão
 
-## Diagnóstico do microfone
+Os presets Atento, Profundo, Brilhante e Calmo selecionam uma combinação existente de modo e controles. Para criar um preset, acrescente seus valores em `PRESET_CONTROL_VALUES` em `presets.js` e exponha um botão correspondente em `index.html`. Para adicionar uma aparência de modo, defina o perfil em `MODE_PROFILES` de `config.js`, implemente sua composição em `app.js`/`renderers.js` e documente os parâmetros em `SHADERS.md`. Mantenha os valores de interface dentro dos limites HTML dos respectivos controles.
 
-Na aba **Sistema**, ative **Reagir ao som** e permita o microfone. Na aba **Eco**, ajuste a sensibilidade, o gate de ruído e a suavização RMS. A captura usa `getUserMedia` e um `AnalyserNode` com FFT de 1024 amostras. O painel mostra nível, banda, ecos e leituras por segundo; o Console do navegador registra captura, RMS, pico, bandas e erros de permissão duas vezes por segundo. Se o RMS continuar em zero, confirme a permissão do site, selecione um microfone ativo no sistema e recarregue a página HTTPS.
+## Permissões e solução de problemas
 
-A demonstração roda toda a análise e desenho no navegador. Não há `AudioRecord`, thread MAUI, GLSL ou uniforms OpenGL neste repositório; os valores de áudio alimentam diretamente o render Canvas em cada frame. O reforço da revelação aumenta a opacidade da imagem durante os ecos, sem implementar uma máscara de segmentação real.
+- **Câmera bloqueada:** permita câmera nas permissões do site e recarregue. Se a câmera estiver ocupada, feche o outro aplicativo.
+- **Sem câmera disponível:** verifique o seletor do aparelho e reconecte a câmera; a interface mantém seus estados de erro e recuperação.
+- **Microfone sem reação:** habilite “Ligar o som”, permita o microfone e confira se outro aplicativo não o está usando. A captura de áudio é opcional.
+- **Página aberta por `file://`:** use localhost ou HTTPS, pois arquivos locais não recebem acesso confiável aos dispositivos.
+- **Tela pausada em segundo plano:** retorne à página; o navegador pode suspender a captura ou o contexto de áudio e exigir recuperação/permissão.
+
+## Verificação recomendada antes de publicar
+
+Verifique abertura e permissão de câmera em Safari iOS e Chrome Android, rotação retrato/paisagem, controles por toque e teclado, microfone permitido/negado, câmera indisponível, retorno de aba em segundo plano e `prefers-reduced-motion`. Confira também os três níveis de vídeo: **OCULTO**, **SUTIL** (padrão) e **VISÍVEL**. Este roteiro descreve validações manuais; resultados reais dependem de testar nos dispositivos-alvo.
+
+## Preparar o novo projeto Vercel
+
+O projeto é estático: `index.html`, CSS e módulos JavaScript são publicados diretamente, sem etapa de compilação. Ao importar o repositório `sole87cv-coder/Psyco_Vis-o` no painel do Vercel, use:
+
+- Nome do projeto sugerido: `psyco-visao`.
+- Framework Preset: **Other**.
+- Root Directory: `.` (raiz do repositório).
+- Build Command: vazio, sem comando de build.
+- Output Directory: `.`.
+
+O arquivo `vercel.json` define **Other**, a saída na raiz e mantém a remoção de `.html` e barra final. A conexão com GitHub, a branch de produção, o domínio e as regras de implantação pertencem ao painel da conta Vercel; esta preparação não cria o projeto nem publica o site.
