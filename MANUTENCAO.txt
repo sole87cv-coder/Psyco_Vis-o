@@ -1,0 +1,297 @@
+================================================================
+ PSYCO_VISÃO — GUIA DE MANUTENÇÃO MANUAL
+================================================================
+
+Este arquivo explica, passo a passo, como fazer as manutenções
+mais comuns neste projeto — mesmo sem conhecer programação a
+fundo. Leia primeiro o "Mapa das pastas" e as "Regras de ouro"
+e depois vá direto para a seção da mudança que você quer fazer.
+
+----------------------------------------------------------------
+ 1. O QUE É O PROJETO (RESUMO)
+----------------------------------------------------------------
+
+Uma página web de arte ("um dispositivo para ver através do
+sono"). Ela usa a câmera e, opcionalmente, o microfone do
+aparelho para gerar imagens de "sonho" no próprio navegador.
+Nada é enviado para servidores: tudo roda localmente.
+
+Não existe etapa de compilação (build). Os arquivos que você
+edita são exatamente os que o navegador usa. O site publicado
+(Vercel) é uma cópia do repositório no GitHub.
+
+----------------------------------------------------------------
+ 2. MAPA DAS PASTAS
+----------------------------------------------------------------
+
+index.html          Entrada do site: todos os textos visíveis,
+                    botões e sliders. PRECISA ficar na raiz.
+css/styles.css      Toda a aparência: cores, tamanhos, layout
+                    de celular e computador.
+js/                 O "motor" do site, em 10 arquivos:
+  js/app.js         Liga tudo: inicia, roda o desenho, conversa
+                    com os outros módulos.
+  js/config.js      Números dos modos de imagem, níveis de vídeo
+                    (OCULTO/SUTIL/VISÍVEL), padrões iniciais.
+  js/presets.js     Valores dos 4 botões de preset (Atento,
+                    Profundo, Brilhante, Calmo).
+  js/camera.js      Acesso à câmera e mensagens de erro.
+  js/audio.js       Leitura do som do microfone.
+  js/motion.js      Detecção de movimento na imagem.
+  js/shaders.js     Combinação visual de cada modo de imagem.
+  js/renderers.js   Camadas do desenho no Canvas.
+  js/ui.js          Textos de estado e rótulos da interface.
+  js/utils.js       Funções auxiliares pequenas.
+scripts/            Ferramentas (não fazem parte do site):
+  scripts/testar_local.py  Servidor de teste no computador.
+Testar-Psyco_Visão.bat     Atalho: duplo clique inicia o teste.
+vercel.json         Configuração da publicação (não mexer).
+README.md           Visão geral e passos de publicação.
+SHADERS.md          Catálogo dos efeitos visuais.
+MANUTENCAO.txt      Este arquivo.
+
+----------------------------------------------------------------
+ 3. COMO TESTAR NO SEU COMPUTADOR
+----------------------------------------------------------------
+
+1. Dê um duplo clique em "Testar-Psyco_Visão.bat".
+   - Uma janela preta abre e o navegador mostra o site.
+   - Permita a câmera quando o navegador perguntar.
+2. Para ver suas mudanças: salve o arquivo editado e aperte F5
+   no navegador. Se parecer que nada mudou, aperte Ctrl+Shift+R
+   (recarrega ignorando a cópia antiga; veja a seção 7).
+3. Para parar o teste: feche a janela preta (ou Ctrl+C nela).
+
+Detalhe importante: câmera e microfone só funcionam em endereço
+seguro. No computador, o teste local já é seguro (localhost).
+No celular, um endereço http:// comum NÃO libera a câmera —
+nesse caso o caminho é o site publicado (https).
+
+----------------------------------------------------------------
+ 4. MANUTENÇÕES MAIS COMUNS (PASSO A PASSO)
+----------------------------------------------------------------
+
+4.1) TROCAR UM TEXTO QUE APARECE NA TELA
+----------------------------------------
+Abra index.html com um editor de texto (Bloco de Notas, VS Code
+ou qualquer outro). Use Ctrl+F para achar o texto exato.
+
+Exemplo — a frase central:
+    Antes:  <h1>O sonho escuta.</h1>
+    Depois: <h1>O sonho respira.</h1>
+
+Regra de ouro: troque APENAS as palavras entre > e <.
+Nunca apague as etiquetas ( <h1> </h1> ), nem as aspas.
+
+Principais textos e onde estão no index.html:
+- Título da aba do navegador: <title>Psyco_Visão — ...</title>
+- Frase grande do centro: "O sonho escuta." e o subtítulo logo
+  abaixo ("um aparelho de escutar o escuro").
+- Abertura (ritual): os dois textos dentro de <div class="ritual">
+- Botões de baixo: ESCUTAR, VER EM OUTRA TELA, AJUSTES
+- Estados no topo: "O OLHO CEGO" / "A ESCUTA MUDA" (o texto
+  desses muda sozinho conforme câmera/microfone; o inicial
+  está no index.html).
+- Painel Ajustes: títulos ("Ajustes"), rótulos dos controles
+  ("Verde do sonho", "Nitidez da lembrança", etc.) e descrições.
+- Janela "Ver em outra tela": todo o texto de instruções.
+
+4.2) TROCAR AS CORES PRINCIPAIS
+-------------------------------
+Abra css/styles.css. Na primeira linha, depois de ":root", estão
+as cores do site — cada uma no formato --nome:#código;
+
+  --ink        fundo geral (quase preto)
+  --forest     fundo dos painéis e botões
+  --moss       fundo secundário
+  --moon       cor principal dos textos (verde-claro)
+  --soft       textos secundários (verde mais apagado)
+  --moss-line  linhas e bordas
+  --amber      destaques e avisos
+  --alert      aviso forte
+  --error      erro
+  --line       linha fina de apoio
+
+Troque apenas o código depois dos dois pontos. Exemplos válidos:
+#a8e0b8 (formato hex) ou rgb(168,224,184).
+
+Para suavizar ou reforçar a marca d'água de grão: na regra
+".grain", mude "opacity:.04" (0 = invisível, 1 = forte).
+
+Observação: algumas cores aparecem escritas direto em outras
+partes do arquivo (ex.: #82ac8e). Para mudanças simples, use as
+variáveis acima — elas cobrem a maior parte da aparência.
+
+4.3) MUDAR O VALOR INICIAL DOS CONTROLES (SLIDERS)
+---------------------------------------------------
+Cada slider está em index.html com min, max e value, por ex.:
+    <input id="edge" type="range" min="10" max="100" value="58">
+"value" é a posição de abertura do controle. Valores atuais:
+  Verde do sonho (green)     72
+  Nitidez (edge)             58
+  Ondas (wave)               36
+  Olho de peixe (fish)       18
+  Falhas de cor (glitch)     8
+  Rastro de luz (trail)      84
+  Sensibilidade (sens)       40
+  Limiar (gate)              8
+  Suavidade (smoothing)      72
+  Força (vivid)              72
+
+Atenção: o navegador guarda os ajustes de quem já visitou o site
+no armazenamento local. Mudar "value" no HTML NÃO altera a tela
+de quem já usou antes. Para conferir a mudança no seu próprio
+navegador, limpe os dados do site (clique no cadeado ao lado do
+endereço → "Dados do site" → limpar) e recarregue.
+
+4.4) AJUSTAR OS MODOS DE IMAGEM
+-------------------------------
+Modos: Silhueta, Contorno, Silhueta e contorno, Só ecos de luz.
+Os números de cada modo ficam em js/config.js, em MODE_PROFILES.
+Cada modo tem, por exemplo:
+  smokeAlpha, contourAlpha, meshAlpha, pulseAlpha   (0 a 1 = força)
+  imageAlpha (0 a 1), imageContrast, imageSaturation
+  filter    (a "receita" de cor: grayscale, sepia, hue-rotate...)
+
+Dica segura: mexa primeiro em alpha (0 = desliga, 1 = cheio) e
+salve. O catálogo SHADERS.md explica o que cada camada faz.
+
+4.5) AJUSTAR OS 4 BOTÕES DE PRESET
+-----------------------------------
+Os presets (Atento, Profundo, Brilhante, Calmo) mexem nos sliders
+de uma vez. Dois lugares:
+- js/presets.js -> PRESET_CONTROL_VALUES: qual valor cada preset
+  dá para cada controle (mode, sens, gate, green, edge, wave,
+  fish, glitch, vivid, trail).
+- js/config.js -> PRESET_PROFILES: o tom geral de cada preset
+  (hue, contrast, saturation, brightness, persistence).
+
+Mantenha os números dentro dos limites (min/max) dos sliders no
+index.html — a seção 4.3 lista os controles.
+
+4.6) MUDAR OS NÍVEIS DE VÍDEO (OCULTO / SUTIL / VISÍVEL)
+--------------------------------------------------------
+js/config.js -> VIDEO_LEVELS. Hoje: oculto 0, sutil 0.20,
+visível 0.55 (0 = nada da câmera, 1 = imagem cheia).
+
+4.7) MUDAR O QUE ABRE LIGADO (PADRÃO)
+-------------------------------------
+js/config.js -> DEFAULT_VIDEO_LEVEL ("sutil") e DEFAULT_PRESET
+("bat" = Atento). Use os nomes técnicos: oculto/sutil/visivel e
+bat/deep/delirium/breath.
+
+4.8) TROCAR OS AVISOS TEMPORÁRIOS ("notice")
+--------------------------------------------
+Os avisos que aparecem por alguns segundos na parte de baixo da
+tela são escritos pelo js/app.js (procure por "notify("). O
+visual do balão está em css/styles.css na regra ".notice".
+
+4.9) AJUSTAR O ESFORÇO DE DETECÇÃO DE MOVIMENTO
+-----------------------------------------------
+js/config.js -> MOTION_QUALITY define as resoluções usadas na
+detecção de movimento (maior = melhor detecção, mais trabalho).
+Deixe como está se o aparelho principal roda bem.
+
+----------------------------------------------------------------
+ 5. GUARDAR VERSÕES (GIT) E PUBLICAR (VERCEL)
+----------------------------------------------------------------
+
+Entenda os dois passos — eles são diferentes:
+
+  COMMIT  = tirar uma "foto" do estado atual e guardar no SEU
+            computador. Nada na internet muda.
+  PUSH    = enviar essas fotos para o GitHub. O Vercel observa o
+            GitHub: quando chega um push, ele republica o site
+            publicado sozinho em cerca de 1 minuto.
+
+Ou seja: o site publicado só muda depois de um PUSH. Commits
+locais são seguros e não afetam nada online.
+
+Fluxo recomendado:
+  1) Mexa no arquivo
+  2) Teste com o Testar-Psyco_Visão.bat (F5 / Ctrl+Shift+R)
+  3) Gostou? Guarde a foto:
+       git add -A
+       git commit -m "descreva em poucas palavras o que mudou"
+  4) Só quando quiser publicar:
+       git push
+
+Se algo quebrar depois de uma mudança, você pode voltar à foto
+anterior:
+       git restore .            (desfaz mudanças ainda não salvas)
+       git log                  (lista as fotos; aperte q p/ sair)
+       git revert <código>      (desfaz uma foto já salva)
+
+----------------------------------------------------------------
+ 6. CHECKLIST DEPOIS DE QUALQUER MUDANÇA
+----------------------------------------------------------------
+
+  [ ] A página abre e o desenho aparece (se a tela ficar preta
+      para sempre, algo quebrou — desfaça a última mudança)
+  [ ] Com a permissão dada, o topo mostra olho/microfone ativos
+      (não "em erro")
+  [ ] O botão AJUSTES abre o painel; sliders e botões respondem
+  [ ] O botão ESCUTAR pede o microfone
+  [ ] Cada preset muda a imagem de forma visível
+  [ ] Janela estreita (formato celular) e janela larga ficam
+      bem: nada cortado, nada sobreposto
+  [ ] Quando possível, teste no celular pelo site publicado
+
+----------------------------------------------------------------
+ 7. PROBLEMAS COMUNS E SOLUÇÕES
+----------------------------------------------------------------
+
+- "Mudei o arquivo, mas o site continua igual."
+  É quase sempre o cache (a cópia antiga guardada pelo
+  navegador). Aperte Ctrl+Shift+R. Se persistir, feche a aba e
+  abra de novo pelo .bat.
+
+- "O OLHO CEGO" nunca sai / câmera não abre:
+  1. Verifique a permissão de câmera do site no navegador.
+  2. Feche outros programas que usam a câmera.
+  3. Confirme que o endereço é localhost (no computador) ou
+     https:// (no site publicado). http:// comum não libera.
+
+- Microfone sem reação: ligue "Ligar o som" no painel Ajustes,
+  permita o microfone e confira se nenhum outro app o usa.
+
+- Testar no celular: localhost aponta para o seu computador.
+  Para câmera/microfone no celular, use o endereço publicado
+  (https) ou uma "Preview URL" do Vercel a partir de uma branch.
+
+- Tela preta permanente logo após uma edição: provavelmente um
+  arquivo quebrou (vírgula, aspas ou etiqueta faltando). Desfaça:
+  git restore .   (ou Ctrl+Z no editor) e recarregue.
+
+----------------------------------------------------------------
+ 8. REGRAS DE OURO (NÃO QUEBRAR A ARQUITETURA)
+----------------------------------------------------------------
+
+1. index.html FICA NA RAIZ do projeto. O servidor local, o
+   Vercel e os testes dependem disso.
+
+2. Não crie etapa de build (nada de npm, webpack, etc.). O site
+   é feito para rodar como está — edite e recarregue.
+
+3. Um módulo por assunto dentro de js/ (o mapa da seção 2 diz o
+   que cada um faz). O "motor" (loop do desenho) fica no
+   js/app.js; evite mexer nele sem necessidade.
+
+4. Não mova nem renomeie arquivos soltos. Referências que
+   quebrariam:
+   - index.html aponta para "./css/styles.css" e "./js/app.js".
+   - Os módulos em js/ se importam entre si ("from './x.js'").
+     Mover TODOS juntos continua funcionando; mover UM só,
+     quebra. Se mover algo, procure o nome do arquivo em
+     index.html, css/, js/ e scripts/ antes de salvar.
+
+5. Textos da interface: sempre em index.html. Tamanhos e fontes:
+   sempre em css/styles.css.
+
+6. Teste no navegador ANTES de commitar. Compare com o site
+   publicado para ter certeza de que a mudança é desejada.
+
+================================================================
+ Fim. Se este guia não cobrir a manutenção que você precisa,
+ anote o que faltou e acrescente aqui — este arquivo é seu.
+================================================================
