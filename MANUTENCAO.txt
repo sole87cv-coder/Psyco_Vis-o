@@ -35,7 +35,9 @@ js/                 O "motor" do site, em 10 arquivos:
                     (OCULTO/SUTIL/VISÍVEL), padrões iniciais.
   js/presets.js     Valores dos 4 botões de preset (Atento,
                     Profundo, Brilhante, Calmo).
-  js/camera.js      Acesso à câmera e mensagens de erro.
+  js/camera.js      Acesso à câmera, escolha da câmera certa em
+                    cada aparelho (laptop × celular) e mensagens
+                    de erro.
   js/audio.js       Leitura do som do microfone.
   js/motion.js      Detecção de movimento na imagem.
   js/shaders.js     Personalidade visual de cada modo/preset (pesos
@@ -200,14 +202,23 @@ index.html — a seção 4.3 lista os controles.
 
 4.6) MUDAR OS NÍVEIS DE VÍDEO (OCULTO / SUTIL / VISÍVEL)
 --------------------------------------------------------
-js/config.js -> VIDEO_LEVELS. Hoje: oculto 0, sutil 0.12,
-visível 0.35 (a intenção de cada nível). Além disso, cada modo em
-MODE_PROFILES tem videoGainSutil/videoGainVisivel — o quanto o
-vídeo aparece de fato em cada nível (hoje .33 no sutil e 1 no
-visível; sutil revela só as bordas, visível revela a área toda de
-movimento). O vídeo entra sempre em escala de cinza multiplicada
-por videoTint: nunca há rosto legível. A presença ainda é
-multiplicada pelo som — sem som, o vídeo apaga.
+js/config.js -> VIDEO_LEVELS. Hoje: oculto 0, sutil 0.15,
+visível 0.35 (a intenção de cada nível: "nada de câmera",
+"vídeo fundido como textura sutil", "mais detalhe, mesma
+atmosfera noturna"). Trocar de nível muda densidade, definição e
+textura — visível a olho nu. Além disso, cada modo em
+MODE_PROFILES tem videoGainSutil/videoGainVisivel (hoje 1 nos
+dois, ou seja, vale o percentual acima). O vídeo entra sempre em
+escala de cinza multiplicada por videoTint: nunca há rosto
+legível. A presença ainda é multiplicada pelo som — sem som, o
+vídeo apaga.
+
+No modo Eco de luz existe um segundo lugar de ajuste:
+js/renderers.js -> ECHO_LEVELS, com um fator por nível para a
+matéria (mat), o fundo difuso dos graves (diffuse) e o
+núcleo/contorno (core). É o que faz o OCULTO ficar denso de
+fósforo limpo, o SUTIL mais enxuto com vídeo por cima e o
+VISÍVEL mais detalhado.
 
 4.7) MUDAR O QUE ABRE LIGADO (PADRÃO)
 -------------------------------------
@@ -220,6 +231,8 @@ gavetas (não apague os nomes):
   psyco_visao_settings   sliders, modo e vídeo
   psyco_visao_visual     preset ativo
   psyco_visao_ui         se a dica inicial já foi dispensada
+
+(A escolha de câmera usa gavetas próprias — veja a seção 4.13.)
 
 4.8) TROCAR OS AVISOS TEMPORÁRIOS ("notice")
 --------------------------------------------
@@ -284,6 +297,54 @@ acorda a interface (quando o aparelho permitir).
   silêncio da sala (limitado a 5%) para o sonho não disparar com
   chiado de fundo.
 
+4.13) ESCOLHER A CÂMERA (LAPTOP × CELULAR)
+------------------------------------------
+O site decide sozinho qual câmera usar, com uma regra por tipo de
+aparelho (js/camera.js):
+
+  COMPUTADOR — prioridade:
+    1º Câmera integrada do laptop (padrão e já selecionada)
+    2º EOS Webcam Utility (Canon)
+    3º Outras (webcam USB etc., com o nome original)
+  CELULAR — prioridade:
+    1º Câmera traseira (padrão)
+    2º Câmera frontal
+    3º Outras (com o nome original)
+
+Como o código decide "laptop" ou "celular": olha o navegador
+(Android/iPhone/iPad) e, se não identificar, pergunta ao sistema
+se o toque é "grosso" (dedo) e a tela é estreita — é a função
+detectDeviceContext, em js/camera.js.
+
+O que você vê na interface:
+- Painel Ajustes -> SISTEMA -> "Câmera do sonho" (menu
+  suspenso id="cameraDevice"). A lista é agrupada
+  ("Integradas" / "EOS / Canon" / "Outras", ou "Traseiras" /
+  "Frontais" / "Outras" no celular). Trocar no menu muda a
+  câmera NA HORA, sem derrubar o som e sem reiniciar o desenho.
+- No celular, o botão "VIRAR PARA A FRENTE" (ícone de setas
+  circulares) alterna traseira ↔ frontal. Ele só aparece quando
+  existem as duas. No computador ele fica escondido.
+- A lista se atualiza sozinha quando você conecta/desconecta uma
+  webcam USB (evento "devicechange" do navegador).
+
+Detalhes que importam:
+- Se a câmera escolhida falhar, o site tenta a próxima na ordem
+  acima — nunca fica "sem câmera" à toa.
+- As escolhas ficam guardadas nas gavetas "psyco.cameraId" (a
+  câmera) e "psyco.facing" ("environment" = traseira/trás,
+  "user" = frontal/frente). São SEPARADAS das gavetas
+  psyco_visao_*; pode apagar para voltar ao padrão da máquina.
+- Nomes de câmera só aparecem completos DEPOIS que a permissão é
+  concedida (regra do navegador). Antes disso a lista mostra
+  "Câmera 1", "Câmera 2" etc.
+- O rótulo amigável ("Câmera integrada do laptop") aparece
+  sozinho quando só existe UMA câmera do tipo; havendo várias, o
+  nome original vai entre parênteses para você distinguir.
+- Para mexer nos padrões (quais nomes contam como "integrada" ou
+  "EOS"), procure INTEGRATED_PATTERNS e EOS_PATTERNS no topo de
+  js/camera.js.
+
 ----------------------------------------------------------------
  5. GUARDAR VERSÕES (GIT) E PUBLICAR (VERCEL)
 ----------------------------------------------------------------
@@ -334,6 +395,9 @@ anterior:
   [ ] O botão AJUSTES abre o painel; sliders e abas respondem
   [ ] O botão ESCUTAR pede o microfone
   [ ] Cada preset muda a imagem de forma visível
+  [ ] Ajustes -> SISTEMA -> "Câmera do sonho" lista as câmeras
+      do aparelho; no computador, a integrada já vem escolhida;
+      trocar no menu muda a imagem na hora, sem perder o som
   [ ] Diagnóstico (SISTEMA): "Quadro médio" abaixo de 12 ms no
       celular; a "Escala de render" adaptativa fica perto de 1
   [ ] Janela estreita (formato celular) e janela larga ficam
@@ -349,6 +413,10 @@ E os testes de canto, que valem antes de publicar:
       respirando com envelope sintético e revela pelo movimento
   [ ] Câmera/microfone ausentes (computador sem webcam): o Eco
       de luz pulsa só com o som, sem erro no console
+  [ ] No celular: a traseira já vem escolhida; o botão de virar
+      alterna frente/trás sem reiniciar nem derrubar o som
+  [ ] Conectar/desconectar uma webcam USB: a lista de câmeras
+      se atualiza sozinha
   [ ] prefers-reduced-motion ligado (nas opções do sistema ou do
       navegador): sem fumaça, sem tremulação; a revelação por
       som continua

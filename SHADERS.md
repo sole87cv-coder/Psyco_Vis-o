@@ -32,20 +32,46 @@ Tudo é Canvas 2D puro (nada de WebGL) e câmera/microfone 100% locais.
 
 | Modo | Assinatura visual | Decaimento | Paleta | Ponto cego | Ajustes que ligam |
 |---|---|---|---|---|---|
-| **Eco de luz** (padrão) | Emissor na base dispara pulsos radiais (velocidade ∝ RMS); as bordas do vídeo deformam os anéis e geram ecos persistentes; vaga-lumes nos agudos | 0,94–0,98 | âmbar + branco quente | sim | `echo`, `reflectionGain .85`, `edgeDeform 1`, `dotGain 1` |
+| **Eco de luz** (padrão) | Três camadas (abaixo): som esculpe a forma, pulsos radiais contornam a silhueta e as bandas dão textura | 0,94–0,98 | verde fósforo + âmbar + branco quente | sim | `echo`, `reflectionGain .85`, `edgeDeform 1`, `dotGain 1` |
 | **Silhueta** | Sem anéis: o som "corta" a silhueta em movimento, verde chapado, sem contorno; silêncio = preto total | 0,85–0,92 | verde escuro chapado | não | `fillAlpha .85`, `ringGain 0` |
 | **Silhueta e contorno** | A mesma silhueta, translúcida (α .55), com contorno fino âmbar e fumaça subindo (traçadores de ruído coerente deslocados pelos agudos) | 0,90–0,96 | verde + âmbar + creme | não | `fillAlpha .55`, `contourAlpha .9`, `smoke 1` |
 | **Só contorno** | Sem preenchimento: bordas a la Sobel com limiar adaptativo por bloco 8×8; cor vai de vermelho → âmbar → branco quente conforme a intensidade local; tremulação fina nos agudos | 0,80–0,88 | vermelho→âmbar→branco quente | não | `contourAlpha 1`, `jitter 2.4`, `ramp` |
 
 Cada modo tem também `bandBass/bandMid/bandTreble` (peso das frequências) e `videoTint` (cor do vídeo tratado).
 
+## Eco de luz em três camadas (`renderEchoEnergy` em `js/renderers.js`)
+
+O Eco de luz é montado como eco de morcego: uma base que o som esculpe, pulsos que atravessam a forma e bandas que dão textura.
+
+**A. Base — o som esculpe.** A máscara continua a mesma regra do site: envelope RMS suavizado × movimento/bordas da câmera. No silêncio, preto vivo (respiração <3%, nunca estático); quando o som chega, a forma real acende com **núcleo nítido (≤1 px) + halo suave** — sem borrão, sem manchas soltas.
+
+**B. Pulsos — a identidade.** Um emissor na base da tela dispara anéis radiais que expandem proporcionalmente ao RMS. Ao tocar as bordas da forma, os anéis **deformam, refratam e deixam eco** (via `echo`/`reflectionGain`, acumulados no ping-pong e decaindo 0,94–0,98 por quadro). O emissor tem **ponto cego** — os pulsos **contornam a forma, não a cobrem**. Posição e raio dos pulsos passam por suavização exponencial (α 0,15–0,25).
+
+**C. Bandas — a textura.** Graves (60–250 Hz) revelam o fundo difuso; médios (250–2 kHz) acendem o corpo da forma principal; agudos (2–8 kHz) acendem bordas, faíscas e tremulação fina.
+
+### Fusão shader × câmera
+
+- Composição em **luminância**: Sobel leve na análise 160×120 + ampliação bilinear = forma DEFINIDA.
+- Só se desenha onde houver estrutura: aresta OU movimento OU pico de banda — o resto é preto.
+- **Paleta restrita: verde fósforo + âmbar + branco quente. Sem RGB cheio.**
+- O que cada nível pede da câmera é modulado por `ECHO_LEVELS` (fatores por nível):
+
+| Nível | `mat` (matéria) | `diffuse` (fundo por graves) | `core` (núcleo/contorno) |
+|---|---|---|---|
+| **OCULTO** | 0,5 | 0,7 | 1 |
+| **SUTIL** | 0,22 | 0,45 | 0,85 |
+| **VISÍVEL** | 0,62 | 1 | 1 |
+
+
 ## Níveis de vídeo (`VIDEO_LEVELS` + `videoGain*`)
 
 | Nível | O que aparece da câmera | Ganho |
 |---|---|---|
-| **OCULTO** (0%) | nada — só o fósforo do som | — |
-| **SUTIL** (~12%, padrão) | apenas as **bordas** (máscara só de `edge`), quase invisível | `videoGainSutil .33` |
-| **VISÍVEL** (~35%) | vídeo tratado na região do movimento/estrutura | `videoGainVisivel 1` |
+| **OCULTO** (0%) | nada — só o fósforo do som: shader puro, formas legíveis | — |
+| **SUTIL** (~15%, padrão) | vídeo fundido como textura sutil, contorno âmbar fino | `videoGainSutil 1` |
+| **VISÍVEL** (~35%) | mais detalhe, mesma atmosfera noturna | `videoGainVisivel 1` |
+
+Trocar de nível muda **densidade, definição e textura** — visível a olho nu. No Eco de luz, os fatores por nível ficam em `ECHO_LEVELS` (tabela acima); nos demais modos, na combinação `VIDEO_LEVELS` × `videoGain*` de cada modo.
 
 O vídeo entra sempre **dessaturado** (escala de cinza) e multiplicado pela cor `videoTint` — nunca há rosto legível nem cor fiel. A presença final é multiplicada pelo envelope: sem som, o vídeo também apaga.
 
@@ -59,9 +85,9 @@ O vídeo entra sempre **dessaturado** (escala de cinza) e multiplicado pela cor 
 
 ## Definição × atmosfera
 
-- Cada forma tem **núcleo definido** (traço de 1–2 px) + **halo progressivamente borrado** (desenhado em resolução menor e ampliado com suavização).
+- Cada forma tem **núcleo definido (≤1 px)** + **halo progressivamente borrado** (desenhado em resolução menor e ampliado com suavização). O núcleo nunca vira mancha.
 - Movimento lê como vivo: a deformação por borda (`edgeDeform`), os ecos e a fumaça dão deriva constante; posições passam por suavização exponencial (α 0,15–0,25).
-- Paletas restritas: 2–3 cores por modo.
+- Paletas restritas: 2–3 cores por modo; no Eco de luz, verde fósforo + âmbar + branco quente, sem RGB cheio.
 
 ## Desempenho (`PERF` em `js/config.js`)
 
