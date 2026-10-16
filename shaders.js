@@ -19,8 +19,6 @@ export function getDreamShader(mode,preset,t,reducedMotion=false){
   return{
     mode,
     filter,
-    cameraAlpha:m.cameraAlpha,
-    echoAlpha:m.echoAlpha,
     smokeAlpha:m.smokeAlpha,
     smokeBlur:m.smokeBlur,
     contourAlpha:m.contourAlpha,

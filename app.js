@@ -77,10 +77,6 @@ from './renderers.js';
   cameraSwitchAvailable=false,
   cameraState='off',
   cameraStateDetail='',
-  frame=0,
-  audioReadCount=0,
-  audioFps=0,
-  lastAudioFpsCheck=0,
   lastAudioLog=0,
   trailCanvas=document.createElement('canvas'),
   trailCtx=trailCanvas.getContext('2d');
@@ -290,8 +286,6 @@ from './renderers.js';
     button.classList.toggle('active',active);
     button.setAttribute('aria-pressed',String(active))
   });
-  const activePresetButton=document.querySelector('#presets .preset[data-preset="'+activeDreamPreset+'"]');
-  if(activePresetButton)$('#dreamLabel').textContent=activePresetButton.textContent.toUpperCase();
   // Heurística geométrica de seleção por movimento; não identifica pessoas nem segmenta a imagem.
   const conservativeHumanMotionHeuristic={
     box:null,
@@ -761,8 +755,7 @@ from './renderers.js';
     pulses.push({
       x:x,y:y,r:0,power:clamp(power,0,1),color:color,bass:bass,treble:treble
     });
-    if(pulses.length>6)pulses.shift();
-    $('#pulseStat').textContent=String(pulses.length).padStart(2,'0')
+    if(pulses.length>6)pulses.shift()
   }
   function sampleAudio(now){
     if(!analyser||!audioCtx)return;
@@ -815,12 +808,6 @@ from './renderers.js';
     audioState[7]=transient?1:0;
     audioState[8]=force;
     audioState[9]=now;
-    audioReadCount++;
-    if(now-lastAudioFpsCheck>=1000){
-      audioFps=Math.round(audioReadCount*1000/(now-lastAudioFpsCheck));
-      audioReadCount=0;
-      lastAudioFpsCheck=now
-    }
     if(now-lastAudioLog>=500){
       console.debug('[Psyco_Visão][AUDIO] RMS='+rms.toFixed(4)+' Peak='+peak.toFixed(3)+' Bass='+b.toFixed(3)+' Mid='+m.toFixed(3)+' Treble='+tr.toFixed(3)+' Transient='+(transient?'yes':'no'));
       lastAudioLog=now
@@ -842,7 +829,6 @@ from './renderers.js';
     updateRenderPerformance(t);
     const dt=Math.min((t-last)/1000||.016,.06);
     last=t;
-    frame++;
     sampleAudio(t);
     if(activeVideoLevel==='oculto'){
       const rawSoundReveal=getSoundReveal();
@@ -932,17 +918,6 @@ from './renderers.js';
       trailCtx.beginPath();
       trailCtx.arc(x,y,r,0,Math.PI*2);
       trailCtx.stroke();
-      if(false&&hasCam&&shader.echoAlpha>0&&videoPresence>.001&&p.power>.12){
-        trailCtx.save();
-        trailCtx.beginPath();
-        trailCtx.ellipse(x,y,60+120*p.power,110+150*p.power,Math.sin(t*.0005)*.2,0,Math.PI*2);
-        trailCtx.clip();
-        trailCtx.globalAlpha=clamp((.06+Math.sqrt(p.power)*.32)*vivid*(+$('#edge').value/58),0,.42)*videoPresence*shader.echoAlpha;
-        trailCtx.filter=shader.filter;
-        const sc=Math.max(w/video.videoWidth,h/video.videoHeight);
-        trailCtx.drawImage(video,(w-video.videoWidth*sc)/2,(h-video.videoHeight*sc)/2,video.videoWidth*sc,video.videoHeight*sc);
-        trailCtx.restore()
-      }
     }
     ctx.setTransform(dpr,0,0,dpr,0,0);
     ctx.fillStyle='#000000';
@@ -973,14 +948,6 @@ from './renderers.js';
       ctx.fillStyle='rgba(105,255,175,'+flash+')';
       ctx.fillRect(0,0,w,h)
     }
-    $('#meter').style.width=Math.min(100,smooth*800)+'%';
-    if(frame%8===0){
-      let band='silêncio';
-      if(rms>gate)band=bass>=mid&&bass>=treble?'grave':treble>mid?'agudo':'médio';
-      $('#audioDiagnostic').textContent=analyser?'Nível: '+Math.round(Math.min(1,smooth*5)*100)+'% · '+band+' · '+audioFps+' análises/s · '+pulses.length+' ecos':'Microfone desligado · respiração do sonho';
-      $('#fps').textContent=Math.round(measuredFps||30)+' FPS · '+(hasCam?'CÂMERA LOCAL':'720p');
-      $('#fpsStat').textContent=String(Math.round(measuredFps||30))
-    }
   }
   draw(0);
   function notify(s){
@@ -1003,7 +970,6 @@ from './renderers.js';
     note.textContent=detail||cameraStateDetail||(state==='on'?'Câmera funcionando':state==='switching'?'Virando a câmera...':state==='loading'?'Toque em Permitir no aviso do navegador':state==='recovering'?'Tentando abrir de novo':state==='denied'?'Toque no cadeado e permita a câmera':'Toque aqui para tentar de novo');
     button.setAttribute('aria-busy',busy?'true':'false');
     button.disabled=busy;
-    $('#start').disabled=busy;
     switchButton.hidden=state!=='on'||!cameraSwitchAvailable;
     switchButton.disabled=busy;
     switchButton.textContent=cameraFacingMode==='environment'?'VIRAR PARA A FRENTE':'VIRAR PARA TRÁS';
@@ -1131,8 +1097,6 @@ from './renderers.js';
       cameraRetryCount=0;
       cameraBusy=false;
       cameraSwitching=false;
-      $('#liveState').classList.add('live');
-      $('#stateText').textContent='sonhando';
       attachCameraTrack(nextStream);
       if(previousStream&&previousStream!==nextStream)previousStream.getTracks().forEach(t=>t.stop());
       updateCameraState('on');
@@ -1237,7 +1201,6 @@ from './renderers.js';
       if(!$('#panel').classList.contains('show')&&!$('#shareDialog').open&&!$('#wake').checked)document.body.classList.add('sleeping')
     },4200)
   }
-  $('#open').onclick=reveal;
   $('#settingsOpen').onclick=reveal;
   $('#panel').addEventListener('pointerdown',()=>reveal());
   $('#panel').addEventListener('keydown',()=>reveal());
@@ -1273,21 +1236,6 @@ from './renderers.js';
     wakeForMoment()
   };
   canvas.addEventListener('pointerdown',()=>reveal());
-  document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{
-    document.querySelectorAll('.tab').forEach(tab=>{
-      const active=tab===b;
-      tab.classList.toggle('active',active);
-      tab.setAttribute('aria-selected',String(active))
-    });
-    document.querySelectorAll('.page').forEach(page=>{
-      const active=page.id===b.dataset.tab;
-      page.classList.toggle('active',active);
-      page.hidden=!active
-    })
-  });
-  $('#start').onclick=()=>{
-    if(!started)startCamera(cameraFacingMode)
-  };
   $('#switchCamera').onclick=()=>switchCamera();
   document.querySelectorAll('#presets .preset').forEach(button=>button.addEventListener('click',()=>{
     const preset=button.dataset.preset;
@@ -1298,18 +1246,10 @@ from './renderers.js';
       item.setAttribute('aria-pressed',String(active))
     });
     activeDreamPreset=preset;
-    $('#dreamLabel').textContent=button.textContent.toUpperCase();
     updateLabels();
     persist();
     pulse(.6,.5,.5)
   }));
-  document.querySelectorAll('#performance .preset').forEach((b,
-  i)=>b.onclick=()=>{
-    document.querySelectorAll('#performance .preset').forEach(x=>x.classList.remove('active'));
-    b.classList.add('active');
-    $('#fps').textContent=['30 FPS · 1280×720','30 FPS · 854×480','60 FPS · 480×270','24–60 FPS · auto'][i];
-    notify('Modo '+b.textContent+' selecionado.')
-  });
   $('#about').onclick=()=>$('#aboutText').hidden=!$('#aboutText').hidden;
   function refreshDeviceDiagnostics(){
     const report=$('#diagnosticReport'),
@@ -1390,8 +1330,6 @@ from './renderers.js';
       timeData.fill(0);
       micStartedAt=performance.now();
       lastSilenceAt=micStartedAt;
-      lastAudioFpsCheck=micStartedAt;
-      audioReadCount=0;
       lastAudioLog=micStartedAt;
       console.info('[Psyco_Visão][AUDIO] Captura ativa; estado='+audioCtx.state+' sampleRate='+audioCtx.sampleRate+' fftSize='+analyser.fftSize+' input='+micStream.getAudioTracks()[0]?.label);
       noiseSum=0;

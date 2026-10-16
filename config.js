@@ -13,8 +13,6 @@ export const DEFAULT_VIDEO_LEVEL = 'sutil';
 export const DEFAULT_PRESET = 'bat';
 export const MODE_PROFILES = {
   silhouette:{
-    cameraAlpha:1,
-    echoAlpha:.30,
     smokeAlpha:.52,
     smokeBlur:15,
     contourAlpha:0,
@@ -27,8 +25,6 @@ export const MODE_PROFILES = {
     filter:'grayscale(1) contrast(1.14) sepia(.58) hue-rotate(162deg) saturate(.72) brightness(.88)'
   },
   outline:{
-    cameraAlpha:0,
-    echoAlpha:0,
     smokeAlpha:0,
     smokeBlur:0,
     contourAlpha:1.08,
@@ -41,8 +37,6 @@ export const MODE_PROFILES = {
     filter:'grayscale(1) contrast(2.4) sepia(.16) hue-rotate(172deg) saturate(.45) brightness(1.18)'
   },
   both:{
-    cameraAlpha:.52,
-    echoAlpha:.18,
     smokeAlpha:.29,
     smokeBlur:12,
     contourAlpha:.64,
@@ -55,8 +49,6 @@ export const MODE_PROFILES = {
     filter:'grayscale(1) contrast(1.25) sepia(.48) hue-rotate(168deg) saturate(.66) brightness(.86)'
   },
   abstract:{
-    cameraAlpha:0,
-    echoAlpha:0,
     smokeAlpha:0,
     smokeBlur:0,
     contourAlpha:0,
