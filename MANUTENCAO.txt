@@ -38,8 +38,9 @@ js/                 O "motor" do site, em 10 arquivos:
   js/camera.js      Acesso à câmera e mensagens de erro.
   js/audio.js       Leitura do som do microfone.
   js/motion.js      Detecção de movimento na imagem.
-  js/shaders.js     Combinação visual de cada modo de imagem.
-  js/renderers.js   Camadas do desenho no Canvas.
+  js/shaders.js     Personalidade visual do sonar em cada modo/preset.
+  js/renderers.js   O motor de sonar: pulsos, ecos, decaimento e
+                    composição no Canvas.
   js/ui.js          Textos de estado e rótulos da interface.
   js/utils.js       Funções auxiliares pequenas.
 scripts/            Ferramentas (não fazem parte do site):
@@ -86,14 +87,19 @@ Nunca apague as etiquetas ( <h1> </h1> ), nem as aspas.
 Principais textos e onde estão no index.html:
 - Título da aba do navegador: <title>Psyco_Visão — ...</title>
 - Frase grande do centro: "O sonho escuta." e o subtítulo logo
-  abaixo ("um aparelho de escutar o escuro").
-- Abertura (ritual): os dois textos dentro de <div class="ritual">
-- Botões de baixo: ESCUTAR, VER EM OUTRA TELA, AJUSTES
-- Estados no topo: "O OLHO CEGO" / "A ESCUTA MUDA" (o texto
-  desses muda sozinho conforme câmera/microfone; o inicial
-  está no index.html).
-- Painel Ajustes: títulos ("Ajustes"), rótulos dos controles
-  ("Verde do sonho", "Nitidez da lembrança", etc.) e descrições.
+  abaixo ("um aparelho de escutar o escuro"). Ela aparece só na
+  primeira visita e some no primeiro toque.
+- Abertura (ritual): os textos de <div class="ritual">.
+- Barra de baixo: a leitura sonora (a palavra muda sozinha,
+  "Silêncio"/"Escutando" etc.) e a engrenagem de ajustes.
+- Ações rápidas (rodapé do painel): ESCUTAR, TELA CHEIA,
+  DIAGNÓSTICO.
+- Pílula do topo: dois ícones (olho e ouvido). O texto ao lado
+  de cada ícone ("○ OLHO CEGO", "○ ESCUTA MUDA") só aparece em
+  caso de erro; os textos são trocados pelo js/app.js.
+- Painel Ajustes: títulos ("Ajustes"), abas (SONHO, SOM, OUVIR,
+  SISTEMA), rótulos dos controles ("Verde do sonho", "Nitidez da
+  lembrança", etc.) e descrições (abrem no "?").
 - Janela "Ver em outra tela": todo o texto de instruções.
 
 4.2) TROCAR AS CORES PRINCIPAIS
@@ -148,13 +154,17 @@ endereço → "Dados do site" → limpar) e recarregue.
 -------------------------------
 Modos: Silhueta, Contorno, Silhueta e contorno, Só ecos de luz.
 Os números de cada modo ficam em js/config.js, em MODE_PROFILES.
-Cada modo tem, por exemplo:
-  smokeAlpha, contourAlpha, meshAlpha, pulseAlpha   (0 a 1 = força)
-  imageAlpha (0 a 1), imageContrast, imageSaturation
-  filter    (a "receita" de cor: grayscale, sepia, hue-rotate...)
+Cada modo tem sete ajustes do sonar (0 = desliga, 1 = neutro):
+  ringGain        força dos anéis (pulsos)
+  ringWidth       espessura dos anéis
+  edgeDeform      gagueira dos anéis nas bordas de movimento
+  edgeGain        quanto as bordas do vídeo acendem os ecos
+  dotGain         força da "pipoca" (pontos dos agudos)
+  reflectionGain  chance de um pulso gerar eco ao tocar borda
+  videoGain       presença do vídeo (0 = sem imagem)
 
-Dica segura: mexa primeiro em alpha (0 = desliga, 1 = cheio) e
-salve. O catálogo SHADERS.md explica o que cada camada faz.
+Dica segura: mexa primeiro em ringGain e dotGain (0 = desliga,
+1 = cheio) e salve. O catálogo SHADERS.md explica cada um.
 
 4.5) AJUSTAR OS 4 BOTÕES DE PRESET
 -----------------------------------
@@ -163,16 +173,25 @@ de uma vez. Dois lugares:
 - js/presets.js -> PRESET_CONTROL_VALUES: qual valor cada preset
   dá para cada controle (mode, sens, gate, green, edge, wave,
   fish, glitch, vivid, trail).
-- js/config.js -> PRESET_PROFILES: o tom geral de cada preset
-  (hue, contrast, saturation, brightness, persistence).
+- js/config.js -> PRESET_PROFILES: a personalidade do sonar de
+  cada preset:
+    decay       decaimento do fósforo, 0.9 a 0.965 (maior = o
+                rastro dura mais)
+    speed       velocidade dos pulsos
+    amberMix    quanto de âmbar entra no verde (0 a 1)
+    breathRate  ritmo da respiração no silêncio
+    breathDepth profundidade da respiração (e do ponto cego)
+    dotGain     força da "pipoca" dos agudos
 
 Mantenha os números dentro dos limites (min/max) dos sliders no
 index.html — a seção 4.3 lista os controles.
 
 4.6) MUDAR OS NÍVEIS DE VÍDEO (OCULTO / SUTIL / VISÍVEL)
 --------------------------------------------------------
-js/config.js -> VIDEO_LEVELS. Hoje: oculto 0, sutil 0.20,
-visível 0.55 (0 = nada da câmera, 1 = imagem cheia).
+js/config.js -> VIDEO_LEVELS. Hoje: oculto 0, sutil 0.12,
+visível 0.35 (0 = nada da câmera, 1 = imagem cheia). A presença
+final ainda é limitada a 0.6 na composição — a intenção é que
+nunca haja rosto legível, só uma massa verde sob o movimento.
 
 4.7) MUDAR O QUE ABRE LIGADO (PADRÃO)
 -------------------------------------
@@ -180,17 +199,63 @@ js/config.js -> DEFAULT_VIDEO_LEVEL ("sutil") e DEFAULT_PRESET
 ("bat" = Atento). Use os nomes técnicos: oculto/sutil/visivel e
 bat/deep/delirium/breath.
 
+Quem já visitou o site guarda as escolhas no navegador. São três
+gavetas (não apague os nomes):
+  psyco_visao_settings   sliders, modo e vídeo
+  psyco_visao_visual     preset ativo
+  psyco_visao_ui         se a dica inicial já foi dispensada
+
 4.8) TROCAR OS AVISOS TEMPORÁRIOS ("notice")
 --------------------------------------------
 Os avisos que aparecem por alguns segundos na parte de baixo da
 tela são escritos pelo js/app.js (procure por "notify("). O
 visual do balão está em css/styles.css na regra ".notice".
 
-4.9) AJUSTAR O ESFORÇO DE DETECÇÃO DE MOVIMENTO
------------------------------------------------
-js/config.js -> MOTION_QUALITY define as resoluções usadas na
-detecção de movimento (maior = melhor detecção, mais trabalho).
-Deixe como está se o aparelho principal roda bem.
+4.9) AJUSTAR A DETECÇÃO DE MOVIMENTO
+------------------------------------
+js/config.js -> ANALYSIS_WIDTH / ANALYSIS_HEIGHT definem a
+resolução da análise (hoje 160 x 120). O limiar que separa
+"parado" de "mexeu" é calculado em js/motion.js a partir do
+controle "Nitidez da lembrança" (edge) — mover o slider já muda
+a sensibilidade. Deixe a resolução como está se o aparelho
+principal roda bem.
+
+4.10) MUDAR OS TEMPOS DO HUD (INTERFACE QUE SOME)
+-------------------------------------------------
+js/config.js -> HUD:
+  idleMs        2500 — tempo parado até a interface sumir
+  longPressMs    500 — tempo de toque para abrir o menu radial
+  doubleTapMs    300 — janela do toque duplo (alterna o vídeo)
+  tapSlack        12 — pixels de folga para considerar "toque"
+
+Gestos (implementados em js/app.js): toque curto mostra/esconde;
+toque duplo alterna OCULTO/SUTIL/VISÍVEL; pressão longa abre o
+menu radial (Escutar/Modo/Ajustes/Tela cheia); tecla H mostra a
+interface no computador. Mexer no motion do celular também
+acorda a interface (quando o aparelho permitir).
+
+4.11) NÚMEROS DO SONAR (PULSOS, CAMPO, DESEMPENHO)
+--------------------------------------------------
+- js/config.js -> FIELD_PIXELS: teto de pixels do campo do sonar
+  (128 000 no celular, 320 000 no computador).
+- js/config.js -> DPR_CAP: nitidez de render (1.5 celular,
+  2.0 computador).
+- js/config.js -> PERF: quando o quadro passa de 16 ms por 1 s,
+  o render encolhe para 85% e volta sozinho quando estabiliza.
+- js/renderers.js -> RING_FADE (hoje 0.95): quanto um pulso
+  desvanece por quadro; perto de 1 = rastro longo. A amplitude
+  do anel na tela é .6 * raiz(fade) — mexer nesses dois números
+  muda o brilho geral.
+
+4.12) O SOM QUE VIRA FORMA
+--------------------------
+- As 8 bandas de frequência estão em js/config.js -> BAND_EDGES
+  (60 Hz a 14 000 Hz). Graves viram anéis largos, médios anéis
+  contidos, agudos a "pipoca" âmbar.
+- O tamanho da análise (fftSize, hoje 512) fica em js/app.js,
+  onde o microfone é ligado. Maior = mais detalhe, mais custo.
+- A suavização do som é feita em JavaScript (js/app.js), não no
+  AnalyserNode do navegador — se o som parecer "duro", mexa ali.
 
 ----------------------------------------------------------------
  5. GUARDAR VERSÕES (GIT) E PUBLICAR (VERCEL)
@@ -230,12 +295,27 @@ anterior:
       para sempre, algo quebrou — desfaça a última mudança)
   [ ] Com a permissão dada, o topo mostra olho/microfone ativos
       (não "em erro")
-  [ ] O botão AJUSTES abre o painel; sliders e botões respondem
+  [ ] Depois de ~2,5 s parado, a interface some e ficam só o
+      desenho e a marca d'água; um toque a traz de volta
+  [ ] O botão AJUSTES abre o painel; sliders e abas respondem
   [ ] O botão ESCUTAR pede o microfone
   [ ] Cada preset muda a imagem de forma visível
   [ ] Janela estreita (formato celular) e janela larga ficam
       bem: nada cortado, nada sobreposto
   [ ] Quando possível, teste no celular pelo site publicado
+
+E os testes de canto, que valem antes de publicar:
+  [ ] Retrato e paisagem: girar a tela não corta o painel nem a
+      pílula; o sonar se reajusta
+  [ ] Câmera negada: o texto aparece no topo, sem quebrar; tocar
+      no ícone do olho tenta de novo
+  [ ] Microfone negado: idem no ícone do ouvido; o site continua
+      respirando sem som
+  [ ] prefers-reduced-motion ligado (nas opções do sistema ou do
+      navegador): sem deriva, pulsos lentos, interface apenas
+      desvanece (sem animação)
+  [ ] Aba em segundo plano: voltar mostra a câmera de novo; se
+      ficou muito tempo escondida, tocar no olho reabre
 
 ----------------------------------------------------------------
  7. PROBLEMAS COMUNS E SOLUÇÕES
