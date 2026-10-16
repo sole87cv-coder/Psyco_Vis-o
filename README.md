@@ -22,26 +22,27 @@ Requer navegador moderno com módulos ES, Canvas 2D e `getUserMedia`; câmera e 
 
 ## Estrutura
 
-- `index.html`: marcação, conteúdo e controles acessíveis.
-- `styles.css`: layout, responsividade, estados e movimento reduzido.
-- `app.js`: inicialização, estado de sessão e coordenação do loop visual.
-- `config.js`: perfis, níveis de vídeo e qualidade adaptativa.
-- `camera.js`: mensagens de erro, restrições e utilidades de dispositivos.
-- `audio.js`: cálculo das bandas e nível de sinal a partir dos buffers do navegador.
-- `ui.js`: atualização de controles, rótulos e níveis de vídeo.
-- `presets.js`: valores e aplicação dos quatro presets.
-- `motion.js`: análise de diferença entre quadros e máscara de movimento.
-- `shaders.js`: perfis de composição visual por modo e preset.
-- `renderers.js`: composição reutilizável de camadas no Canvas.
-- `utils.js`: limites numéricos e acesso seguro ao armazenamento local.
+- `index.html`: marcação, conteúdo e controles acessíveis (entrada do site; precisa ficar na raiz).
+- `css/styles.css`: layout, responsividade, estados e movimento reduzido.
+- `js/app.js`: inicialização, estado de sessão e coordenação do loop visual.
+- `js/config.js`: perfis, níveis de vídeo e qualidade adaptativa.
+- `js/camera.js`: mensagens de erro, restrições e utilidades de dispositivos.
+- `js/audio.js`: cálculo das bandas e nível de sinal a partir dos buffers do navegador.
+- `js/ui.js`: atualização de controles, rótulos e níveis de vídeo.
+- `js/presets.js`: valores e aplicação dos quatro presets.
+- `js/motion.js`: análise de diferença entre quadros e máscara de movimento.
+- `js/shaders.js`: perfis de composição visual por modo e preset.
+- `js/renderers.js`: composição reutilizável de camadas no Canvas.
+- `js/utils.js`: limites numéricos e acesso seguro ao armazenamento local.
 - `SHADERS.md`: catálogo visual e guia para evolução de efeitos.
+- `MANUTENCAO.txt`: guia passo a passo das manutenções manuais comuns.
 - `vercel.json`: configuração de publicação estática (Vercel, framework *Other*).
 - `Testar-Psyco_Visão.bat`: atalho Windows para iniciar o servidor local.
 - `scripts/testar_local.py`: servidor HTTP sem dependências para teste em `127.0.0.1`.
 
 ## Presets e extensão
 
-Os presets Atento, Profundo, Brilhante e Calmo selecionam uma combinação existente de modo e controles. Para criar um preset, acrescente seus valores em `PRESET_CONTROL_VALUES` em `presets.js` e exponha um botão correspondente em `index.html`. Para adicionar uma aparência de modo, defina o perfil em `MODE_PROFILES` de `config.js`, implemente sua composição em `app.js`/`renderers.js` e documente os parâmetros em `SHADERS.md`. Mantenha os valores de interface dentro dos limites HTML dos respectivos controles.
+Os presets Atento, Profundo, Brilhante e Calmo selecionam uma combinação existente de modo e controles. Para criar um preset, acrescente seus valores em `PRESET_CONTROL_VALUES` em `js/presets.js` e exponha um botão correspondente em `index.html`. Para adicionar uma aparência de modo, defina o perfil em `MODE_PROFILES` de `js/config.js`, implemente sua composição em `js/app.js`/`js/renderers.js` e documente os parâmetros em `SHADERS.md`. Mantenha os valores de interface dentro dos limites HTML dos respectivos controles.
 
 ## Permissões e solução de problemas
 

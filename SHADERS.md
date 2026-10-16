@@ -24,9 +24,9 @@ O Psyco_Visão chama de “shader” a combinação artística de leitura de pix
 
 ## Parâmetros por preset
 
-`presets.js` define valores de interface para Atento (`bat`), Profundo (`deep`), Brilhante (`delirium`) e Calmo (`breath`). `config.js` define perfil de modo (`MODE_PROFILES`) e o perfil visual do preset (`PRESET_PROFILES`), incluindo contraste, saturação, brilho e persistência. Esses valores alimentam a composição existente; não são uma API independente de shader com opacidade configurável por efeito.
+`js/presets.js` define valores de interface para Atento (`bat`), Profundo (`deep`), Brilhante (`delirium`) e Calmo (`breath`). `js/config.js` define perfil de modo (`MODE_PROFILES`) e o perfil visual do preset (`PRESET_PROFILES`), incluindo contraste, saturação, brilho e persistência. Esses valores alimentam a composição existente; não são uma API independente de shader com opacidade configurável por efeito.
 
-O microfone é opcional. Com a escuta desligada, os efeitos mantêm animação de base e não inferem energia sonora. Quando ativo, `audio.js` calcula RMS, pico, bandas aproximadas de graves/médios/agudos e frequência dominante dos dados retornados pelo `AnalyserNode`.
+O microfone é opcional. Com a escuta desligada, os efeitos mantêm animação de base e não inferem energia sonora. Quando ativo, `js/audio.js` calcula RMS, pico, bandas aproximadas de graves/médios/agudos e frequência dominante dos dados retornados pelo `AnalyserNode`.
 
 ## Camadas e desempenho
 
@@ -34,4 +34,4 @@ A página compõe a câmera/máscara de movimento, efeitos primários, imagem re
 
 ## Como evoluir
 
-Ao adicionar efeito, escolha um módulo conforme sua responsabilidade: análise de pixels em `motion.js`, medição sonora em `audio.js`, composição compartilhada em `renderers.js`, perfil visual em `config.js`/`shaders.js` ou interação em `ui.js`. Evite leituras repetidas de `getImageData` dentro do mesmo quadro; reutilize buffers, respeite a resolução adaptativa e mantenha a captura local. Documente identidade, entrada, controles e custo esperado aqui.
+Ao adicionar efeito, escolha um módulo conforme sua responsabilidade: análise de pixels em `js/motion.js`, medição sonora em `js/audio.js`, composição compartilhada em `js/renderers.js`, perfil visual em `js/config.js`/`js/shaders.js` ou interação em `js/ui.js`. Evite leituras repetidas de `getImageData` dentro do mesmo quadro; reutilize buffers, respeite a resolução adaptativa e mantenha a captura local. Documente identidade, entrada, controles e custo esperado aqui.
