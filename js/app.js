@@ -324,7 +324,7 @@ from './renderers.js';
       }
       if(triggered){
         const strength=clamp((.14+(analyser?above*14:env*.8)+audioState[8]*.7)*sensitivity,0,1);
-        if(analyser&&treble>bass*1.12&&strength>.2)dreamField.spawnDots(Math.round(3+treble*8*(.6+liveParams.fish*.8)),strength,analysisState);
+        if(analyser&&treble>bass*1.12&&strength>.2)dreamField.spawnDots(Math.round(3+treble*11),strength,analysisState);
         else if(analyser&&bass<mid)dreamField.spawnRing({
           power:strength*.9,band:'mid'
         });
@@ -408,7 +408,7 @@ from './renderers.js';
     liveParams.vivid=+$('#vivid').value/100;
     updateSpawns(t,shader,envelope);
     dreamField.step(dt,{
-      shader,rmsEnvelope:envelope,motion:analysisState
+      shader,rmsEnvelope:envelope,motion:analysisState,live:liveParams
     });
     if(videoPresence!==videoPresenceTarget){
       const progress=clamp((t-videoPresenceStart)/600,0,1),
@@ -416,7 +416,10 @@ from './renderers.js';
       videoPresence=videoPresenceFrom+(videoPresenceTarget-videoPresenceFrom)*ease;
       if(progress===1)videoPresenceFrom=videoPresenceTarget
     }
-    let decay=clamp(shader.decay+((+$('#trail').value/100)-.84)*.08,shader.decayMin,shader.decayMax);
+    const trailValue=+$('#trail').value/100;
+    let decay=trailValue<=.84
+      ?shader.decayMin+(shader.decay-shader.decayMin)*(trailValue/.84)
+      :shader.decay+(shader.decayMax-shader.decay)*((trailValue-.84)/.16);
     if(shader.reduced)decay=Math.min(decay,shader.decayMin+.02);
     const mode=shader.mode,
     level=activeVideoLevel,
@@ -424,18 +427,19 @@ from './renderers.js';
     needsMask=hasCam&&(mode==='abstract'||mode==='silhouette'||mode==='both'||level!=='oculto');
     let underlay=false;
     if(needsMask){
-      dreamField.buildReveal(analysisState,mode==='abstract'||level==='oculto'?'visivel':level,edgeControl,shader);
+      dreamField.buildReveal(analysisState,mode==='abstract'||level==='oculto'?'visivel':level,edgeControl,shader,liveParams);
       if(level!=='oculto')underlay=dreamField.renderUnderlay(video,shader,level)
     }
     if(mode==='abstract')dreamField.renderEchoEnergy(shader,analysisState,envelope,bandLive,liveParams,level,edgeControl);
     else if(mode==='silhouette')dreamField.renderSilhouette(shader,envelope,bandLive,liveParams);
     else if(mode==='both'){
       dreamField.renderSilhouette(shader,envelope,bandLive,liveParams);
-      if(hasCam)dreamField.renderContourThin(shader,analysisState,envelope);
+      if(hasCam)dreamField.renderContourThin(shader,analysisState,envelope,liveParams);
       if(shader.smoke>0)dreamField.updateAndDrawSmoke(shader,analysisState,envelope,bandLive,liveParams,dt,t)
     }
     else if(hasCam)dreamField.renderInfrared(shader,analysisState,envelope,bandLive,liveParams,t);
     dreamField.accumulate(decay,mode==='abstract'||mode==='outline');
+    dreamField.tear(liveParams.glitch,bandLive.treble);
     const breath=.5+.5*Math.sin(t*.00045*shader.breathRate),
     breathLevel=Math.round(.4+4.6*shader.breathDepth*breath),
     breathColor='rgb('+(breathLevel>0?breathLevel:0)+','+breathLevel+','+(breathLevel>0?breathLevel-1:0)+')',
@@ -448,6 +452,9 @@ from './renderers.js';
       videoAlpha,
       breathColor,
       blindSpot,
+      fish:liveParams.fish,
+      glitch:liveParams.glitch,
+      treble:bandLive.treble,
       emitterScreenX:w*.5,
       emitterScreenY:h*.97
     });

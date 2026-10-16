@@ -44,8 +44,8 @@ export function analyzeMotionFrame(source,state,edgeControl=.58,collectBounds=tr
   maxX=-1,
   maxY=-1;
   for(let i=0,offset=0;i<count;i++,offset+=4)luma[i]=source[offset]*.299+source[offset+1]*.587+source[offset+2]*.114;
-  const motionThreshold=16+(1-edgeControl)*28,
-  edgeThreshold=24-edgeControl*20,
+  const motionThreshold=14+edgeControl*30,
+  edgeThreshold=6+edgeControl*18,
   inverseSpan=1/(88-motionThreshold),
   leftLimit=width*.06,
   rightLimit=width*.94,

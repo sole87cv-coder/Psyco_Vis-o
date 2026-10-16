@@ -24,7 +24,7 @@ Tudo é Canvas 2D puro (nada de WebGL) e câmera/microfone 100% locais.
 3. **Máscara** (`buildReveal`): o campo é comparado com um limiar por nível de vídeo; o resultado vira uma imagem RGBA na cor `palette.fill` do modo.
 4. **Forma do modo** (ver tabela abaixo): cada modo desenha sua assinatura no campo (`renderEchoEnergy`, `renderSilhouette` + `renderContourThin`, `renderInfrared`).
 5. **Acumulação** (`accumulate`): dois buffers alternam (ping-pong); o quadro novo entra multiplicado pelo **decaimento** do modo+preset.
-6. **Composição** (`compose`): respiração ao fundo, vídeo tratado (por nível) por baixo, fósforo somado, ponto cego recortado.
+6. **Composição** (`compose`): respiração ao fundo, vídeo tratado (por nível) por baixo, fósforo somado — com **lente de olho de peixe** e **falhas de cor** (separação RGB + rasgos) opcionais — e ponto cego recortado.
 
 **Filtro de coerência:** nada é desenhado onde não há borda, movimento ou som — o silêncio nunca vira granulado de tela cheia.
 
@@ -83,6 +83,18 @@ O vídeo entra sempre **dessaturado** (escala de cinza) e multiplicado pela cor 
 - **agudos (2–8 kHz)** → bordas acesas, vaga-lumes e a tremulação fina do contorno.
 - Sem microfone (negado/ausente): envelope sintético lento + aviso discreto na interface; o sonho continua respirando.
 
+## Controles do sonho → onde cada um age
+
+| Controle | O que muda na experiência | Onde age |
+|---|---|---|
+| **Verde do sonho** | 15 = sonho desbotado (rosa/âmbar), 100 = verde intenso; pesa um pouco na densidade | canal G das cores de anel/contorno/preenchimento (`greenScale`) |
+| **Nitidez da lembrança** | esfumaçado ↔ nítido: baixo = câmera sensível, tudo difuso; alto = só bordas fortes, enxuto | limiares em `js/motion.js` + limiar/multiplicador de `buildReveal` e `writeContourThin` |
+| **Ondas** | anéis mais largos e velozes, mais gagueira nas bordas, manchas do baixo maiores | `step()` (velocidade), largura do anel, `deformAmp`, escala da mancha, jitter do contorno |
+| **Olho de peixe** | lente real: centro ampliado, bordas derrubadas | `warpField()` dentro de `compose` (tiras de 4 px) |
+| **Falhas de cor** | fantasma vermelho/ciano + rasgos horizontais; mais fortes com agudos | separação RGB em `compose` + `tear()` sobre o campo |
+| **Rastro de luz** | 0 = rastro mínimo do modo, 84 (padrão) = valor do preset, 100 = máximo | decaimento do ping-pong (`decayMin/decayBase/decayMax`) |
+| **Força das formas** | brilho/opacidade das formas reveladas | `vividFactor` sobre matéria, contorno e silhueta |
+
 ## Definição × atmosfera
 
 - Cada forma tem **núcleo definido (≤1 px)** + **halo progressivamente borrado** (desenhado em resolução menor e ampliado com suavização). O núcleo nunca vira mancha.
@@ -101,4 +113,4 @@ O vídeo entra sempre **dessaturado** (escala de cinza) e multiplicado pela cor 
 
 ## Como evoluir
 
-Números "de fora" para brincar: o **decaimento** de cada modo (`decayMin/decayMax/decayBase`), a **paleta** (`palette.fill/core/warm/veil/flash/ramp`), o **limiar** de revelação em `buildReveal` (`sutil .34` / demais `.14`), a **fumaça** (`spawnSmoke`/`updateAndDrawSmoke`) e a **tremulação** (`jitter`). Meça sempre o "Quadro médio" no diagnóstico antes e depois. Evite `getImageData` extra por quadro, reutilize buffers e mantenha a captura local. Documente identidade, entrada, controles e custo esperado aqui.
+Números "de fora" para brincar: o **decaimento** de cada modo (`decayMin/decayMax/decayBase`), a **paleta** (`palette.fill/core/warm/veil/flash/ramp`), o **limiar** de revelação em `buildReveal` (`sutil .34` / demais `.16`, deslocado pela "Nitidez"), a **fumaça** (`spawnSmoke`/`updateAndDrawSmoke`), a **tremulação** (`jitter`) e a **lente** (`warpField`: força .62 com tiras de 4 px). Meça sempre o "Quadro médio" no diagnóstico antes e depois. Evite `getImageData` extra por quadro, reutilize buffers e mantenha a captura local. Documente identidade, entrada, controles e custo esperado aqui.

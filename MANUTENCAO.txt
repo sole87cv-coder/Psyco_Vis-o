@@ -160,8 +160,9 @@ Silhueta, Silhueta e contorno, Só contorno.
 Os números de cada modo ficam em js/config.js, em MODE_PROFILES.
 Cada modo tem:
   decayMin/decayMax/decayBase  decaimento do fósforo (o rastro);
-                    o controle "Rastro de luz" (trail) desloca
-                    dentro desses limites
+                    o controle "Rastro de luz" (trail) cobre
+                    esses limites: 0 = decayMin, 84 (padrão) =
+                    decayBase do preset, 100 = decayMax
   palette         cores do modo (fill, core, warm, veil, flash;
                     em "Só contorno" também ramp)
   videoTint       cor do vídeo tratado (níveis Sutil/Visível)
@@ -344,6 +345,44 @@ Detalhes que importam:
 - Para mexer nos padrões (quais nomes contam como "integrada" ou
   "EOS"), procure INTEGRATED_PATTERNS e EOS_PATTERNS no topo de
   js/camera.js.
+
+4.14) O QUE CADA CONTROLE DE EFEITO FAZ NO MOTOR
+------------------------------------------------
+Os seis controles das abas "Sonho" e "Som" mexem em lugares
+fixos do js/renderers.js (e do js/app.js). Cada um tem efeito
+garantido — se mexer no slider, a tela muda:
+
+  Verde do sonho (green)      tinge o CANAL VERDE das cores do
+      fósforo: anéis, contorno, silhueta e a rampa do "Só
+      contorno". 15 = sonho desbotado (puxado a rosa/âmbar);
+      100 = verde intenso. Também pesa um pouco na densidade
+      da matéria revelada. (função greenScale)
+  Nitidez da lembrança (edge) vira os limiares da análise em
+      js/motion.js: baixo = câmera sensível e imagem esfumaçada;
+      alto = só bordas fortes, imagem nítida e enxuta. O mesmo
+      controle ajusta o limiar da revelação (buildReveal) e do
+      contorno fino.
+  Ondas (wave)                tamanho/espessura e velocidade dos
+      anéis, a gagueira deles nas bordas, o tamanho das manchas
+      do baixo e o comprimento das ondas de tremulação do
+      "Só contorno".
+  Olho de peixe (fish)        distorção de lente real: o campo
+      do sonho é esticado no centro e derrubado nas bordas
+      (warpField) antes de aparecer na tela. 18 (padrão) = lente
+      leve; 100 = olho de peixe forte.
+  Falhas de cor (glitch)      separação RGB (fantasma vermelho +
+      ciano) e rasgos horizontais aleatórios (tear) em TODOS os
+      modos; fica mais forte quando há agudos. 8 (padrão) =
+      falhas raras; 100 = imagem rasgada.
+  Rastro de luz (trail)       quanto tempo o fósforo leva para
+      apagar: 0 = mínimo do modo (decayMin), 84 = valor de
+      fábrica do preset (decayBase + decayShift), 100 = máximo
+      do modo (decayMax).
+  Força das formas (vivid)    multiplica o brilho/opacidade das
+      formas reveladas (vividFactor) em todos os modos.
+
+Dica: para conferir um efeito isolado, ponha o slider no 0 e
+depois no 100 e observe o mesmo trecho por alguns segundos.
 
 ----------------------------------------------------------------
  5. GUARDAR VERSÕES (GIT) E PUBLICAR (VERCEL)
