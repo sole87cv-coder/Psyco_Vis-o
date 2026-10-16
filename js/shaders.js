@@ -30,6 +30,7 @@ export function getDreamShader(mode,preset,t,reducedMotion=false){
     reflectionGain:reduced?m.reflectionGain*.4:m.reflectionGain,
     fillAlpha:m.fillAlpha*(reduced?.9:1),
     contourAlpha:m.contourAlpha,
+    diffuseGain:m.diffuseGain||0,
     smoke:reduced?0:m.smoke,
     jitter:reduced?0:m.jitter,
     bandBass:m.bandBass,

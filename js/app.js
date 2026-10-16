@@ -39,7 +39,9 @@ from './ui.js';
 import {
   cameraErrorMessage,
   getCameraConstraints,
-  countVideoInputs
+  detectDeviceContext,
+  classifyCameras,
+  pickFlipTarget
 }
 from './camera.js';
 import {
@@ -79,9 +81,14 @@ from './renderers.js';
   cameraBusy=false,
   cameraSwitching=false,
   cameraFacingMode='environment',
+  cameraContext=detectDeviceContext(),
+  cameraClassification=null,
+  cameraActiveId='',
+  storedCameraId=readStoredCameraId(),
+  storedFacing=readStoredFacing(),
   cameraRetryCount=0,
   cameraRetryTimer=0,
-  cameraSwitchAvailable=false,
+  deviceChangeTimer=0,
   cameraState='off',
   cameraStateDetail='',
   lastAudioLog=0,
@@ -413,13 +420,14 @@ from './renderers.js';
     if(shader.reduced)decay=Math.min(decay,shader.decayMin+.02);
     const mode=shader.mode,
     level=activeVideoLevel,
-    needsMask=hasCam&&(level!=='oculto'||mode==='silhouette'||mode==='both');
+    edgeControl=+$('#edge').value/100,
+    needsMask=hasCam&&(mode==='abstract'||mode==='silhouette'||mode==='both'||level!=='oculto');
     let underlay=false;
     if(needsMask){
-      dreamField.buildReveal(analysisState,level==='oculto'?'visivel':level,+$('#edge').value/100,shader);
+      dreamField.buildReveal(analysisState,mode==='abstract'||level==='oculto'?'visivel':level,edgeControl,shader);
       if(level!=='oculto')underlay=dreamField.renderUnderlay(video,shader,level)
     }
-    if(mode==='abstract')dreamField.renderEchoEnergy(shader,analysisState,envelope,liveParams);
+    if(mode==='abstract')dreamField.renderEchoEnergy(shader,analysisState,envelope,bandLive,liveParams,level,edgeControl);
     else if(mode==='silhouette')dreamField.renderSilhouette(shader,envelope,bandLive,liveParams);
     else if(mode==='both'){
       dreamField.renderSilhouette(shader,envelope,bandLive,liveParams);
@@ -487,7 +495,7 @@ from './renderers.js';
     button.setAttribute('aria-busy',busy?'true':'false');
     button.setAttribute('aria-label','Câmera: '+name.textContent.replace(/^[●○]\s*/,''));
     button.disabled=busy;
-    switchButton.hidden=state!=='on'||!cameraSwitchAvailable;
+    switchButton.hidden=state!=='on'||cameraContext!=='mobile'||!flipAvailable();
     switchButton.disabled=busy;
     switchButton.setAttribute('aria-label',cameraFacingMode==='environment'?'Virar para a câmera da frente':'Virar para a câmera de trás');
     document.body.classList.toggle('dream-awake',state==='on');
@@ -496,19 +504,95 @@ from './renderers.js';
     else if(state==='on'||state==='off')hud.clearError('camera');
     if(state==='off'||state==='denied'||state==='error')maybeStartLoop()
   }
-  function refreshCameraChoices(){
-    if(!navigator.mediaDevices?.enumerateDevices){
-      cameraSwitchAvailable=false;
+  function readStoredCameraId(){
+    try{
+      return localStorage.getItem('psyco.cameraId')||''
+    }
+    catch(_){
+      return ''
+    }
+  }
+  function readStoredFacing(){
+    try{
+      const value=localStorage.getItem('psyco.facing');
+      return value==='user'||value==='environment'?value:''
+    }
+    catch(_){
+      return ''
+    }
+  }
+  function persistCameraChoice(){
+    try{
+      if(cameraActiveId)localStorage.setItem('psyco.cameraId',cameraActiveId);
+      if(cameraFacingMode==='user'||cameraFacingMode==='environment')localStorage.setItem('psyco.facing',cameraFacingMode)
+    }
+    catch(_){}
+  }
+  function flipAvailable(){
+    return cameraContext==='mobile'&&!!cameraClassification&&cameraClassification.hasRear&&cameraClassification.hasFront
+  }
+  function activeCameraId(){
+    const settings=stream?.getVideoTracks?.()[0]?.getSettings?.();
+    return settings?.deviceId||cameraActiveId||''
+  }
+  function optionForEntry(entry,activeId){
+    const option=document.createElement('option');
+    option.value=entry.id;
+    option.textContent=entry.label;
+    if(entry.id===activeId)option.selected=true;
+    return option
+  }
+  function populateCameraSelect(){
+    const select=$('#cameraDevice');
+    if(!select)return;
+    select.textContent='';
+    const entries=cameraClassification?.entries||[];
+    if(!entries.length){
+      const option=document.createElement('option');
+      option.value='';
+      option.textContent='Câmera padrão do aparelho';
+      select.append(option);
+      select.disabled=true;
+      return
+    }
+    select.disabled=false;
+    const activeId=activeCameraId()||cameraClassification.defaultId,
+    groups=cameraClassification.groups;
+    if(groups.length>1)groups.forEach(group=>{
+      const items=cameraClassification.ordered.filter(entry=>entry.group===group.key);
+      if(!items.length)return;
+      const optgroup=document.createElement('optgroup');
+      optgroup.label=group.title;
+      items.forEach(entry=>optgroup.append(optionForEntry(entry,activeId)));
+      select.append(optgroup)
+    });
+    else cameraClassification.ordered.forEach(entry=>select.append(optionForEntry(entry,activeId)));
+    if(entries.some(entry=>entry.id===activeId))select.value=activeId
+  }
+  async function refreshCameraChoices(){
+    if(!navigator.mediaDevices?.enumerateDevices||!navigator.mediaDevices?.getUserMedia){
+      cameraClassification=null;
+      populateCameraSelect();
       updateCameraState(cameraState);
       return
     }
-    navigator.mediaDevices.enumerateDevices().then(devices=>{
-      cameraSwitchAvailable=countVideoInputs(devices)>1;
+    try{
+      const devices=await navigator.mediaDevices.enumerateDevices(),
+      liveId=activeCameraId();
+      cameraClassification=classifyCameras(devices,cameraContext,{
+        deviceId:liveId,facing:cameraFacingMode
+      });
+      const known=id=>cameraClassification.entries.some(entry=>entry.id===id);
+      if(liveId)cameraActiveId=liveId;
+      else if(!known(cameraActiveId))cameraActiveId=known(storedCameraId)?storedCameraId:cameraClassification.defaultId;
+      populateCameraSelect();
       updateCameraState(cameraState)
-    }).catch(()=>{
-      cameraSwitchAvailable=false;
+    }
+    catch(_){
+      cameraClassification=null;
+      populateCameraSelect();
       updateCameraState(cameraState)
-    })
+    }
   }
   function scheduleCameraRecovery(error){
     if(cameraRetryTimer||cameraBusy)return;
@@ -533,7 +617,7 @@ from './renderers.js';
     updateCameraState('recovering','A câmera parou. Tentaremos abrir de novo.');
     cameraRetryTimer=setTimeout(()=>{
       cameraRetryTimer=0;
-      startCamera(cameraFacingMode,{
+      startCamera({
         recovery:true
       })
     },delay)
@@ -571,8 +655,53 @@ from './renderers.js';
       }
     })
   }
-  async function startCamera(mode=cameraFacingMode,{
-    recovery=false,switching=false
+  async function requestCameraStream(wanted){
+    const attempts=[],
+    seen=new Set(),
+    addAttempt=options=>{
+      const key=options.deviceId?'d:'+options.deviceId:'f:'+(options.facing||'environment');
+      if(!seen.has(key)){
+        seen.add(key);
+        attempts.push(options)
+      }
+    };
+    if(wanted.deviceId)addAttempt({
+      deviceId:wanted.deviceId,facing:wanted.facing
+    });
+    if(wanted.facing)addAttempt({
+      facing:wanted.facing
+    });
+    if(!cameraSwitching)addAttempt({
+      facing:'environment'
+    });
+    let lastError=null;
+    for(const options of attempts){
+      try{
+        const candidate=await navigator.mediaDevices.getUserMedia(getCameraConstraints(options)),
+        settings=candidate.getVideoTracks()[0]?.getSettings?.()||{};
+        if(cameraSwitching){
+          const wrongDevice=options.deviceId&&settings.deviceId&&settings.deviceId!==options.deviceId,
+          wrongFacing=!options.deviceId&&(settings.facingMode==='user'||settings.facingMode==='environment')&&settings.facingMode!==(options.facing||'environment');
+          if(wrongDevice||wrongFacing){
+            candidate.getTracks().forEach(item=>item.stop());
+            throw Object.assign(new Error('requested-camera-unavailable'),{
+              name:'OverconstrainedError'
+            })
+          }
+        }
+        return candidate
+      }
+      catch(error){
+        lastError=error;
+        if(['NotAllowedError','PermissionDeniedError','SecurityError'].includes(error?.name))throw error
+      }
+    }
+    throw lastError||Object.assign(new Error('no-camera'),{
+      name:'NotFoundError'
+    })
+  }
+  async function startCamera({
+    deviceId='',facing='',recovery=false,switching=false
   }
   ={}){
     if(document.visibilityState==='hidden'){
@@ -585,6 +714,10 @@ from './renderers.js';
     }
     if(cameraBusy)return false;
     if(started&&stream&&!recovery&&!switching)return true;
+    const wanted={
+      deviceId:deviceId||(switching?'':storedCameraId||cameraActiveId||''),
+      facing:facing||(switching?'environment':storedFacing||cameraFacingMode||'environment')
+    };
     cameraBusy=true;
     if(switching)cameraSwitching=true;
     if(!recovery&&!switching)cameraRetryCount=0;
@@ -592,34 +725,24 @@ from './renderers.js';
     let nextStream=null;
     try{
       if(!navigator.mediaDevices?.getUserMedia)throw new Error('camera-unavailable');
-      try{
-        nextStream=await navigator.mediaDevices.getUserMedia(getCameraConstraints(mode))
-      }
-      catch(constraintError){
-        if(constraintError?.name!=='OverconstrainedError')throw constraintError;
-        nextStream=await navigator.mediaDevices.getUserMedia({
-          video:{
-            facingMode:{
-              ideal:mode
-            }
-          },audio:false
-        })
-      }
-      const actualMode=nextStream.getVideoTracks()[0]?.getSettings?.().facingMode;
-      if(switching&&actualMode&&actualMode!==mode)throw Object.assign(new Error('requested-camera-unavailable'),{
-        name:'OverconstrainedError'
-      });
+      nextStream=await requestCameraStream(wanted);
+      const settings=nextStream.getVideoTracks()[0]?.getSettings?.()||{},
+      actualId=settings.deviceId||'',
+      entry=actualId?cameraClassification?.entries.find(item=>item.id===actualId):null,
+      actualFacing=settings.facingMode==='user'||settings.facingMode==='environment'?settings.facingMode:entry&&entry.group==='front'?'user':entry&&entry.group==='rear'?'environment':(wanted.deviceId?cameraFacingMode:wanted.facing);
       const previousStream=stream;
       video.srcObject=nextStream;
       await video.play();
       stream=nextStream;
-      cameraFacingMode=actualMode||mode;
+      if(actualId)cameraActiveId=actualId;
+      if(actualFacing==='user'||actualFacing==='environment')cameraFacingMode=actualFacing;
       started=true;
       cameraRetryCount=0;
       cameraBusy=false;
       cameraSwitching=false;
       attachCameraTrack(nextStream);
-      if(previousStream&&previousStream!==nextStream)previousStream.getTracks().forEach(t=>t.stop());
+      if(previousStream&&previousStream!==nextStream)previousStream.getTracks().forEach(item=>item.stop());
+      persistCameraChoice();
       updateCameraState('on');
       maybeStartLoop();
       refreshCameraChoices();
@@ -627,10 +750,10 @@ from './renderers.js';
       return true
     }
     catch(error){
-      if(nextStream&&nextStream!==stream)nextStream.getTracks().forEach(t=>t.stop());
+      if(nextStream&&nextStream!==stream)nextStream.getTracks().forEach(item=>item.stop());
       cameraBusy=false;
       cameraSwitching=false;
-      started=!!stream&&stream.getVideoTracks().some(t=>t.readyState==='live');
+      started=!!stream&&stream.getVideoTracks().some(item=>item.readyState==='live');
       if(started){
         video.srcObject=stream;
         updateCameraState('on');
@@ -649,29 +772,23 @@ from './renderers.js';
     }
   }
   async function switchCamera(){
-    if(cameraBusy||cameraSwitching||!started||!cameraSwitchAvailable)return;
-    const previous=cameraFacingMode,
-    target=previous==='environment'?'user':'environment';
-    cameraSwitching=true;
-    updateCameraState('switching');
-    const oldStream=stream;
-    stream=null;
-    started=false;
-    video.srcObject=null;
-    if(oldStream)oldStream.getTracks().forEach(t=>t.stop());
-    await new Promise(resolve=>setTimeout(resolve,180));
-    const switched=await startCamera(target,{
-      switching:true
+    if(cameraBusy||cameraSwitching||!started)return;
+    if(cameraContext!=='mobile'||!flipAvailable())return;
+    const previousId=cameraActiveId||activeCameraId(),
+    previousFacing=cameraFacingMode,
+    targetFacing=previousFacing==='environment'?'user':'environment',
+    targetId=pickFlipTarget(cameraClassification,previousFacing);
+    const switched=await startCamera({
+      deviceId:targetId,facing:targetFacing,switching:true
     });
     if(switched){
       notify('A câmera mudou.');
       return
     }
-    const fallback=target==='user'?'environment':previous;
-    const returned=await startCamera(fallback,{
-      switching:true
+    const returned=await startCamera({
+      deviceId:previousId,facing:previousFacing,switching:true
     });
-    if(returned)notify(target==='user'?'A câmera da frente não respondeu. Voltamos para a traseira.':'A troca não funcionou. Voltamos para a câmera anterior.');
+    if(returned)notify(targetFacing==='user'?'A câmera da frente não respondeu. Voltamos para a traseira.':'A troca não funcionou. Voltamos para a câmera anterior.');
     else updateCameraState('error','As câmeras não responderam. Toque no olho para tentar de novo.')
   }
   function updateMicState(state){
@@ -813,7 +930,7 @@ from './renderers.js';
   }
   $('#settingsOpen').onclick=openSheet;
   $('#cameraStatus').onclick=()=>{
-    if(!started)startCamera(cameraFacingMode)
+    if(!started)startCamera({})
   };
   $('#microphoneStatus').onclick=toggleMic;
   $('#listenToggle').onclick=()=>{
@@ -830,6 +947,19 @@ from './renderers.js';
   };
   document.querySelectorAll('[data-close-share]').forEach(b=>b.onclick=()=>$('#shareDialog').close?.());
   $('#switchCamera').onclick=()=>switchCamera();
+  $('#cameraDevice')?.addEventListener('change',e=>{
+    const id=e.target.value;
+    if(!id)return;
+    if(!started){
+      cameraActiveId=id;
+      persistCameraChoice();
+      return
+    }
+    if(id===activeCameraId()||cameraBusy)return;
+    startCamera({
+      deviceId:id,switching:true
+    })
+  });
   $('#fullscreen').onclick=toggleFullscreen;
   document.querySelectorAll('#presets .preset').forEach(button=>button.addEventListener('click',()=>{
     const preset=button.dataset.preset;
@@ -1055,7 +1185,7 @@ from './renderers.js';
       refreshDeviceDiagnostics();
       return
     }
-    if(!started)await startCamera(cameraFacingMode);
+    if(!started)await startCamera({});
     refreshDeviceDiagnostics()
   };
   $('#wake').onchange=async e=>{
@@ -1166,7 +1296,7 @@ from './renderers.js';
       window.removeEventListener('pointerdown',once,true);
       window.removeEventListener('keydown',once,true);
       cameraGestureArmed=false;
-      if(!started&&!cameraBusy&&cameraState!=='denied')startCamera(cameraFacingMode)
+      if(!started&&!cameraBusy&&cameraState!=='denied')startCamera({})
     };
     window.addEventListener('pointerdown',once,true);
     window.addEventListener('keydown',once,true)
@@ -1186,7 +1316,7 @@ from './renderers.js';
         clearTimeout(watchdog);
         if(permission.state==='granted'){
           cameraPolicySettled=true;
-          startCamera('environment');
+          startCamera({});
           return
         }
         if(cameraPolicySettled)return;
@@ -1250,19 +1380,24 @@ from './renderers.js';
     })
   });
   window.addEventListener('online',()=>{
-    if(cameraState==='error'&&!started)startCamera(cameraFacingMode,{
+    if(cameraState==='error'&&!started)startCamera({
       recovery:true
     })
   });
-  navigator.mediaDevices?.addEventListener?.('devicechange',
-  refreshCameraChoices);
+  navigator.mediaDevices?.addEventListener?.('devicechange',()=>{
+    clearTimeout(deviceChangeTimer);
+    deviceChangeTimer=setTimeout(()=>{
+      deviceChangeTimer=0;
+      refreshCameraChoices()
+    },400)
+  });
   if(navigator.permissions?.query){
     navigator.permissions.query({
       name:'camera'
     }).then(permission=>permission.addEventListener('change',()=>{
       if(permission.state==='granted'&&!started&&!cameraBusy){
         cameraRetryCount=0;
-        startCamera(cameraFacingMode,{
+        startCamera({
           recovery:true
         })
       }

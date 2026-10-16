@@ -6,6 +6,17 @@ const MAX_RINGS=14,
 MAX_DOTS=34,
 MAX_SMOKE=56,
 RING_FADE=1.1,
+ECHO_LEVELS={
+  oculto:{
+    mat:.5, diffuse:.7, core:1
+  },
+  sutil:{
+    mat:.22, diffuse:.45, core:.85
+  },
+  visivel:{
+    mat:.62, diffuse:1, core:1
+  }
+},
 BAND_PARAMS={
   bass:{
     width:.018,speed:.66,gain:1.05,tone:.12
@@ -288,9 +299,12 @@ export function createDreamEngine(){
       }
     }
   }
-  function renderEchoEnergy(shader,motion,env,live){
+  function renderEchoEnergy(shader,motion,env,bands,live,level,edgeControl){
     const ectx=energyCtx,
     unit=fieldHeight/270,
+    factors=ECHO_LEVELS[level]||ECHO_LEVELS.oculto,
+    bass=bands?clamp(bands.bass,0,1):0,
+    mid=bands?clamp(bands.mid,0,1):0,
     deformAmp=motion?shader.edgeDeform*(6+shader.edgeGain*8)*unit*(.7+live.wave*.5):0,
     segments=44;
     ectx.setTransform(1,0,0,1,0,0);
@@ -300,6 +314,20 @@ export function createDreamEngine(){
     ectx.globalCompositeOperation='lighter';
     ectx.lineCap='round';
     ectx.lineJoin='round';
+    if(motion){
+      const diffuseAlpha=clamp(env*(.2+.8*bass)*shader.diffuseGain*factors.diffuse,0,.45);
+      if(diffuseAlpha>.006){
+        ectx.globalAlpha=diffuseAlpha;
+        ectx.drawImage(blurCanvas,0,0,fieldWidth,fieldHeight);
+        ectx.globalAlpha=1
+      }
+      const matAlpha=clamp(shader.fillAlpha*factors.mat*env*(.55+.45*mid)*(.7+.3*live.green),0,.75);
+      if(matAlpha>.006){
+        ectx.globalAlpha=matAlpha;
+        ectx.drawImage(maskCanvas,0,0,fieldWidth,fieldHeight);
+        ectx.globalAlpha=1
+      }
+    }
     for(let i=0;i<rings.length;i++){
       const ring=rings[i],
       band=BAND_PARAMS[ring.band]||BAND_PARAMS.mid,
@@ -332,15 +360,20 @@ export function createDreamEngine(){
         else ectx.lineTo(px,py)
       }
       ectx.closePath();
-      ectx.strokeStyle='rgba('+colorBase+','+amp*.13+')';
-      ectx.lineWidth=Math.max(2.5,width*3.4);
+      ectx.strokeStyle='rgba('+colorBase+','+amp*.09+')';
+      ectx.lineWidth=Math.max(2,width*2.6);
       ectx.stroke();
-      ectx.strokeStyle='rgba('+colorBase+','+amp*.32+')';
-      ectx.lineWidth=Math.max(1.4,width*1.5);
+      ectx.strokeStyle='rgba('+colorBase+','+amp*.26+')';
+      ectx.lineWidth=Math.max(1.2,width*1.2);
       ectx.stroke();
-      ectx.strokeStyle='rgba('+colorBase+','+Math.min(1,amp*.8)+')';
-      ectx.lineWidth=clamp(width*.5,1,2);
+      ectx.strokeStyle='rgba('+colorBase+','+Math.min(1,amp*.85)+')';
+      ectx.lineWidth=clamp(width*.5,.8,1.3);
       ectx.stroke()
+    }
+    if(motion){
+      writeContourThin(motion,env,shader,bands,factors.core,typeof edgeControl==='number'?edgeControl:.5);
+      ectx.globalAlpha=1;
+      ectx.drawImage(contourSource,0,0,fieldWidth,fieldHeight)
     }
     for(let i=0;i<dots.length;i++){
       const dot=dots[i],
@@ -436,13 +469,14 @@ export function createDreamEngine(){
       blockMean=new Float32Array(blockCols*blockRows)
     }
   }
-  function writeContourThin(motion,env,shader){
+  function writeContourThin(motion,env,shader,bands,coreFactor=1,edgeControl=.5){
     ensureContour(motion);
     const out=contourData.data,
     edgeArray=motion.edge,
     core=shader.palette.core,
     warm=shader.palette.warm,
-    threshold=.3,
+    tremor=bands?1+.38*Math.min(1,bands.treble):1,
+    threshold=clamp(.3-(edgeControl-.5)*.12,.2,.42),
     span=1/(1-threshold);
     for(let i=0,o=0;i<edgeArray.length;i++,o+=4){
       let value=(edgeArray[i]-threshold)*span;
@@ -451,7 +485,7 @@ export function createDreamEngine(){
         continue
       }
       if(value>1)value=1;
-      const alpha=clamp(value*1.6*env*shader.contourAlpha,0,1);
+      const alpha=clamp(value*1.6*env*shader.contourAlpha*tremor*coreFactor,0,1);
       out[o]=core[0]+(warm[0]-core[0])*value;
       out[o+1]=core[1]+(warm[1]-core[1])*value;
       out[o+2]=core[2]+(warm[2]-core[2])*value;
