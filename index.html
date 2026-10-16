@@ -132,12 +132,12 @@
             <button class="hint-toggle" type="button" data-hint="desc-mode" aria-expanded="false" aria-label="Explicação">?</button>
           </span>
         </div>
-        <p class="desc" id="desc-mode" hidden>A câmera procura formas para o sonho desenhar.</p>
+        <p class="desc" id="desc-mode" hidden>O som revela a imagem: a câmera procura formas, a voz acende o desenho.</p>
         <select id="mode" aria-label="Escolha o modo de imagem">
+          <option value="abstract" selected>Eco de luz</option>
           <option value="silhouette">Silhueta</option>
-          <option value="outline">Contorno</option>
-          <option value="both" selected>Silhueta e contorno</option>
-          <option value="abstract">Só ecos de luz</option>
+          <option value="both">Silhueta e contorno</option>
+          <option value="outline">Só contorno</option>
         </select>
         <div class="labelrow">
           <span>Modos prontos</span>
@@ -249,7 +249,31 @@
   </dialog>
 
   <div class="notice" id="notice" role="status" aria-live="polite"></div>
-  <script type="module" src="./js/app.js"></script>
+
+  <div class="boot-guard" id="bootGuard" hidden>
+    <div class="boot-card" role="alert">
+      <h2>O sonho precisa de um servidor local</h2>
+      <p>Esta página foi aberta como arquivo direto (<code>file://</code>). Por segurança, o navegador bloqueia os módulos JavaScript neste modo — por isso a tela fica preta.</p>
+      <p><strong>No computador:</strong> feche esta aba e dê dois cliques em <strong>Testar-Psyco_Visão.bat</strong>, na pasta do projeto. O navegador abre sozinho no endereço certo.</p>
+      <p><strong>No celular:</strong> use o endereço publicado do site (começa com <code>https://</code>). Câmera e microfone também só funcionam em endereço seguro.</p>
+      <p class="boot-hint">Se o Testar-Psyco_Visão.bat reclamar de Python, abra a pasta no VS Code e use a extensão Live Server.</p>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var shown = false;
+      window.__psycoShowBootGuard = function () {
+        if (shown || (window.__psycoBoot && window.__psycoBoot.ok)) return;
+        shown = true;
+        var el = document.getElementById('bootGuard');
+        if (el) el.hidden = false;
+      };
+      var delay = location.protocol === 'file:' ? 1200 : 3500;
+      window.setTimeout(window.__psycoShowBootGuard, delay);
+    })();
+  </script>
+  <script type="module" src="./js/app.js" onerror="window.__psycoShowBootGuard()"></script>
 </body>
 
 </html>

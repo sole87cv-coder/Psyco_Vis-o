@@ -20,74 +20,117 @@ export const BAND_EDGES = Object.freeze([60,150,300,600,1200,2400,4800,9600,1400
 export const DEFAULT_VIDEO_LEVEL = 'sutil';
 export const DEFAULT_PRESET = 'bat';
 export const MODE_PROFILES = {
-  silhouette:{
-    ringGain:1,
-    ringWidth:1.25,
-    edgeDeform:1,
-    edgeGain:1.15,
-    dotGain:.55,
-    reflectionGain:.75,
-    videoGain:1
+  abstract: {
+    label:'Eco de luz',
+    decayMin:.94, decayMax:.98, decayBase:.956,
+    palette:{
+      fill:[210,160,80],
+      core:[210,150,60],
+      warm:[255,232,190],
+      veil:[255,214,150],
+      flash:[255,220,160]
+    },
+    videoTint:[205,158,84],
+    videoGainSutil:.34, videoGainVisivel:1,
+    bandBass:1.25, bandMid:1, bandTreble:.95,
+    ringGain:1, ringWidth:1.15, edgeDeform:1, edgeGain:1.1,
+    dotGain:1, reflectionGain:.85,
+    fillAlpha:0, contourAlpha:0, smoke:0, jitter:0,
+    echo:true, blindSpot:true,
+    emitter:{
+      x:.5, y:.97
+    }
   },
-  outline:{
-    ringGain:.92,
-    ringWidth:.6,
-    edgeDeform:1.5,
-    edgeGain:1.5,
-    dotGain:.75,
-    reflectionGain:.9,
-    videoGain:.8
+  silhouette: {
+    label:'Silhueta',
+    decayMin:.85, decayMax:.92, decayBase:.885,
+    palette:{
+      fill:[52,116,80],
+      core:[210,150,60],
+      warm:[255,232,190],
+      veil:[120,190,150],
+      flash:[150,220,170]
+    },
+    videoTint:[130,200,158],
+    videoGainSutil:.33, videoGainVisivel:1,
+    bandBass:1.1, bandMid:1.2, bandTreble:.7,
+    ringGain:0, ringWidth:1, edgeDeform:0, edgeGain:0,
+    dotGain:0, reflectionGain:0,
+    fillAlpha:.85, contourAlpha:0, smoke:0, jitter:0,
+    echo:false, blindSpot:false,
+    emitter:null
   },
-  both:{
-    ringGain:1,
-    ringWidth:1,
-    edgeDeform:1.2,
-    edgeGain:1.3,
-    dotGain:.7,
-    reflectionGain:.85,
-    videoGain:1
+  both: {
+    label:'Silhueta e contorno',
+    decayMin:.9, decayMax:.96, decayBase:.928,
+    palette:{
+      fill:[46,104,74],
+      core:[216,168,80],
+      warm:[255,236,200],
+      veil:[150,205,165],
+      flash:[255,225,170]
+    },
+    videoTint:[140,205,160],
+    videoGainSutil:.33, videoGainVisivel:1,
+    bandBass:1, bandMid:1.1, bandTreble:1.2,
+    ringGain:0, ringWidth:1, edgeDeform:0, edgeGain:0,
+    dotGain:0, reflectionGain:0,
+    fillAlpha:.55, contourAlpha:.9, smoke:1, jitter:0,
+    echo:false, blindSpot:false,
+    emitter:null
   },
-  abstract:{
-    ringGain:1.12,
-    ringWidth:1.3,
-    edgeDeform:.55,
-    edgeGain:.75,
-    dotGain:.5,
-    reflectionGain:.35,
-    videoGain:0
+  outline: {
+    label:'Só contorno',
+    decayMin:.8, decayMax:.88, decayBase:.842,
+    palette:{
+      fill:[0,0,0],
+      core:[232,140,48],
+      warm:[255,236,205],
+      veil:[230,110,70],
+      flash:[255,190,120],
+      ramp:[[170,28,18],[232,140,48],[255,236,205]]
+    },
+    videoTint:[225,118,72],
+    videoGainSutil:.33, videoGainVisivel:1,
+    bandBass:.6, bandMid:1, bandTreble:1.35,
+    ringGain:0, ringWidth:1, edgeDeform:0, edgeGain:0,
+    dotGain:0, reflectionGain:0,
+    fillAlpha:0, contourAlpha:1, smoke:0, jitter:2.4,
+    echo:false, blindSpot:false,
+    emitter:null
   }
 };
 export const PRESET_PROFILES = {
   bat:{
-    decay:.905,
-    speed:1.3,
-    amberMix:.16,
+    decayShift:0,
+    speed:1.25,
     breathRate:1,
-    breathDepth:.4,
-    dotGain:1
+    breathDepth:.45,
+    dotGain:1,
+    warmMix:.15
   },
   deep:{
-    decay:.948,
+    decayShift:.018,
     speed:.9,
-    amberMix:.06,
     breathRate:.7,
     breathDepth:.6,
-    dotGain:.7
+    dotGain:.7,
+    warmMix:.05
   },
   delirium:{
-    decay:.928,
+    decayShift:-.016,
     speed:1.5,
-    amberMix:.42,
     breathRate:1.25,
     breathDepth:.35,
-    dotGain:1.35
+    dotGain:1.35,
+    warmMix:.4
   },
   breath:{
-    decay:.962,
-    speed:.72,
-    amberMix:.03,
+    decayShift:.024,
+    speed:.75,
     breathRate:.55,
-    breathDepth:.75,
-    dotGain:.55
+    breathDepth:.7,
+    dotGain:.6,
+    warmMix:.03
   }
 };

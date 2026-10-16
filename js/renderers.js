@@ -2,24 +2,25 @@ import {
   clamp
 }
 from './utils.js';
-const MAX_RINGS=12,
-MAX_DOTS=28,
-RING_FADE=.95,
+const MAX_RINGS=14,
+MAX_DOTS=34,
+MAX_SMOKE=56,
+RING_FADE=1.1,
 BAND_PARAMS={
   bass:{
-    width:.017,speed:.72,gain:1.1,amber:.25
+    width:.018,speed:.66,gain:1.05,tone:.12
   },
   mid:{
-    width:.011,speed:1,gain:1,amber:.55
+    width:.011,speed:1,gain:1,tone:.45
   },
   treble:{
-    width:.008,speed:1.35,gain:.85,amber:1
+    width:.008,speed:1.3,gain:.85,tone:.8
   },
   echo:{
-    width:.0085,speed:.55,gain:.7,amber:.4
+    width:.009,speed:.55,gain:.75,tone:.35
   }
 };
-function createBuffer(width,height) {
+function createBuffer(width,height){
   if(typeof OffscreenCanvas==='function')try{
     const canvas=new OffscreenCanvas(width,height),
     probe=canvas.getContext('2d');
@@ -33,59 +34,123 @@ function createBuffer(width,height) {
   canvas.height=height;
   return canvas
 }
-export function createSonarEngine() {
+function makeGlowSprite(r,g,b,size=64){
+  const canvas=createBuffer(size,size),
+  ctx=canvas.getContext('2d'),
+  half=size/2,
+  gradient=ctx.createRadialGradient(half,half,0,half,half,half);
+  gradient.addColorStop(0,'rgba('+r+','+g+','+b+',1)');
+  gradient.addColorStop(.25,'rgba('+r+','+g+','+b+',.55)');
+  gradient.addColorStop(.6,'rgba('+r+','+g+','+b+',.14)');
+  gradient.addColorStop(1,'rgba('+r+','+g+','+b+',0)');
+  ctx.fillStyle=gradient;
+  ctx.fillRect(0,0,size,size);
+  return canvas
+}
+function hash2(ix,iy){
+  let n=Math.imul(ix,374761393)+Math.imul(iy,668265263)|0;
+  n=Math.imul(n^n>>>13,1274126177);
+  return((n^n>>>16)>>>0)/4294967296
+}
+function vnoise(x,y){
+  const ix=Math.floor(x),
+  iy=Math.floor(y),
+  fx=x-ix,
+  fy=y-iy,
+  u=fx*fx*(3-2*fx),
+  v=fy*fy*(3-2*fy),
+  a=hash2(ix,iy),
+  b=hash2(ix+1,iy),
+  c=hash2(ix,iy+1),
+  d=hash2(ix+1,iy+1),
+  top=a+(b-a)*u,
+  bottom=c+(d-c)*u;
+  return top+(bottom-top)*v
+}
+function buildRamp(stops){
+  const steps=64,
+  out=new Uint8Array(steps*3),
+  segments=stops.length-1;
+  for(let i=0;i<steps;i++){
+    const position=i/(steps-1)*segments,
+    index=Math.min(segments-1,Math.floor(position)),
+    blend=position-index,
+    from=stops[index],
+    to=stops[index+1],
+    offset=i*3;
+    out[offset]=from[0]+(to[0]-from[0])*blend;
+    out[offset+1]=from[1]+(to[1]-from[1])*blend;
+    out[offset+2]=from[2]+(to[2]-from[2])*blend
+  }
+  return out
+}
+export function createDreamEngine(){
   const energyCanvas=createBuffer(4,4),
   accumA=createBuffer(4,4),
   accumB=createBuffer(4,4),
   maskCanvas=createBuffer(4,4),
-  underCanvas=createBuffer(4,4),
   maskSource=createBuffer(4,4),
+  blurCanvas=createBuffer(4,4),
+  underCanvas=createBuffer(4,4),
+  contourSource=createBuffer(4,4),
   energyCtx=energyCanvas.getContext('2d'),
   accumACtx=accumA.getContext('2d'),
   accumBCtx=accumB.getContext('2d'),
   maskCtx=maskCanvas.getContext('2d'),
-  underCtx=underCanvas.getContext('2d'),
   maskSourceCtx=maskSource.getContext('2d'),
+  blurCtx=blurCanvas.getContext('2d'),
+  underCtx=underCanvas.getContext('2d'),
+  contourCtx=contourSource.getContext('2d'),
+  infraRamp=buildRamp([[196,44,26],[232,140,48],[255,236,205]]),
+  glowWarm=makeGlowSprite(255,232,190),
+  glowAmber=makeGlowSprite(216,166,88),
+  glowSmoke=makeGlowSprite(174,212,184),
+  glowSmokeWarm=makeGlowSprite(255,222,168),
   rings=[],
   ringPool=[],
   dots=[],
   dotPool=[],
-  emitter={
-    x:.5,y:.97
-  };
+  smoke=[],
+  smokePool=[];
   let fieldWidth=0,
   fieldHeight=0,
   fieldDiagonal=0,
-  energyData=null,
+  blurWidth=0,
+  blurHeight=0,
+  emitterX=.5,
+  emitterY=.97,
   maskSourceData=null,
   maskSourceWidth=0,
   maskSourceHeight=0,
+  contourData=null,
+  contourWidth=0,
+  contourHeight=0,
+  jitterRows=null,
+  blockMean=null,
+  blockCols=0,
+  blockRows=0,
+  speedSmooth=0,
   frontCanvas=accumA,
   frontCtx=accumACtx,
   backCanvas=accumB,
   backCtx=accumBCtx;
-  function resize(width,height) {
+  function resize(width,height){
     fieldWidth=width;
     fieldHeight=height;
     fieldDiagonal=Math.sqrt(width*width+height*height);
-    for(const canvas of[energyCanvas,
-    accumA,
-    accumB,
-    maskCanvas,
-    underCanvas]){
+    blurWidth=Math.max(24,width>>2);
+    blurHeight=Math.max(18,height>>2);
+    for(const canvas of[energyCanvas,accumA,accumB,maskCanvas,underCanvas]){
       canvas.width=width;
       canvas.height=height
     }
-    for(const context of[energyCtx,
-    accumACtx,
-    accumBCtx,
-    maskCtx,
-    underCtx]){
+    blurCanvas.width=blurWidth;
+    blurCanvas.height=blurHeight;
+    for(const context of[energyCtx,accumACtx,accumBCtx,maskCtx,underCtx,blurCtx]){
       context.setTransform(1,0,0,1,0,0);
       context.imageSmoothingEnabled=true;
       context.imageSmoothingQuality='high'
     }
-    energyData=new ImageData(width,height);
     frontCanvas=accumA;
     frontCtx=accumACtx;
     backCanvas=accumB;
@@ -93,67 +158,121 @@ export function createSonarEngine() {
     accumACtx.clearRect(0,0,width,height);
     accumBCtx.clearRect(0,0,width,height);
     rings.length=0;
-    dots.length=0
+    dots.length=0;
+    smoke.length=0
   }
-  function reset() {
+  function reset(){
     rings.length=0;
     dots.length=0;
+    smoke.length=0;
     accumACtx.clearRect(0,0,fieldWidth,fieldHeight);
     accumBCtx.clearRect(0,0,fieldWidth,fieldHeight)
   }
   function spawnRing({
-    x=emitter.x,y=emitter.y,power=.3,band='mid'
-  }
-  ={}) {
+    x,y,power=.3,band='mid'
+  }={}){
     if(rings.length>=MAX_RINGS)return;
     const ring=ringPool.pop()||{
     };
-    ring.x=x*fieldWidth;
-    ring.y=y*fieldHeight;
+    ring.x=(x===undefined?emitterX:x)*fieldWidth;
+    ring.y=(y===undefined?emitterY:y)*fieldHeight;
     ring.radius=Math.max(2,fieldHeight*.012);
     ring.power=clamp(power,0,1);
     ring.band=band;
     rings.push(ring)
   }
-  function spawnTreble(count,power,pickPoint,amberMix=0) {
+  function spawnDots(count,power,motion){
     for(let i=0;i<count&&dots.length<MAX_DOTS;i++){
-      const point=pickPoint?pickPoint():{
-        x:Math.random(),y:Math.random()*.8
-      },
-      dot=dotPool.pop()||{
+      let px=.25+Math.random()*.5,
+      py=.2+Math.random()*.6;
+      if(motion){
+        const edge=motion.edge;
+        for(let attempt=0;attempt<6;attempt++){
+          const index=(Math.random()*edge.length)|0;
+          if(edge[index]>.42){
+            px=(index%motion.width)/motion.width;
+            py=((index/motion.width)|0)/motion.height;
+            break
+          }
+        }
+      }
+      const dot=dotPool.pop()||{
       };
-      dot.x=point.x*fieldWidth;
-      dot.y=point.y*fieldHeight;
+      dot.x=px*fieldWidth;
+      dot.y=py*fieldHeight;
       dot.power=clamp(power*(.5+Math.random()*.5),0,1);
       dot.life=0;
       dot.ttl=.22+Math.random()*.28;
-      dot.amberMix=amberMix;
+      dot.warm=Math.random()<.55;
       dots.push(dot)
     }
   }
-  function sampleEdge(motion,x,y) {
-    const ax=clamp(((x/fieldWidth)*motion.width)|0,0,motion.width-1),
-    ay=clamp(((y/fieldHeight)*motion.height)|0,0,motion.height-1);
+  function spawnSmoke(env,mid,treble,wave,motion){
+    if(env<.05)return;
+    const rate=env*(.7+mid*1.2+treble*1.6)*(.5+wave*1.2);
+    let count=Math.floor(rate);
+    if(Math.random()<rate-count)count++;
+    if(count>2)count=2;
+    for(let i=0;i<count&&smoke.length<MAX_SMOKE;i++){
+      let px=.3+Math.random()*.4,
+      py=.6+Math.random()*.35;
+      if(motion){
+        const structure=motion.structure;
+        for(let attempt=0;attempt<8;attempt++){
+          const index=(Math.random()*structure.length)|0;
+          if(structure[index]>.24){
+            px=(index%motion.width)/motion.width;
+            py=((index/motion.width)|0)/motion.height;
+            break
+          }
+        }
+      }
+      const particle=smokePool.pop()||{
+      };
+      particle.x=px*fieldWidth;
+      particle.y=py*fieldHeight;
+      particle.vx=0;
+      particle.vy=0;
+      particle.life=0;
+      particle.ttl=1.6+Math.random()*1.8;
+      particle.size=9+Math.random()*14;
+      particle.seed=Math.random()*40;
+      particle.warm=Math.random()<.45;
+      smoke.push(particle)
+    }
+  }
+  function sampleEdgeAt(motion,x,y){
+    if(!motion||!motion.width)return 0;
+    const ax=clamp((x/fieldWidth*motion.width)|0,0,motion.width-1),
+    ay=clamp((y/fieldHeight*motion.height)|0,0,motion.height-1);
     return motion.edge[ay*motion.width+ax]
   }
-  function step(dt,{
-    shader,rmsEnvelope=0,motion=null
-  }
-  ={
-  }) {
-    const speedPixels=shader.speed*fieldHeight*.85*(.55+1.1*rmsEnvelope);
+  function step(dt,{shader,rmsEnvelope=0,motion=null}={}){
+    if(shader.emitter){
+      emitterX=shader.emitter.x;
+      emitterY=shader.emitter.y
+    }
+    const speedTarget=shader.speed*fieldHeight*.85*(.5+1.15*rmsEnvelope);
+    speedSmooth+=(speedTarget-speedSmooth)*.2;
     for(let i=rings.length-1;i>=0;i--){
       const ring=rings[i],
       band=BAND_PARAMS[ring.band]||BAND_PARAMS.mid;
-      ring.radius+=dt*speedPixels*band.speed;
+      ring.radius+=dt*speedSmooth*band.speed;
       ring.power-=ring.power*dt*RING_FADE;
       if(motion&&ring.power>.22&&ring.radius>6&&shader.reflectionGain>0&&rings.length<MAX_RINGS&&Math.random()<dt*3*shader.reflectionGain){
         const angle=Math.random()*Math.PI*2,
         ex=ring.x+Math.cos(angle)*ring.radius,
         ey=ring.y+Math.sin(angle)*ring.radius;
-        if(sampleEdge(motion,ex,ey)>.5)spawnRing({
-          x:ex/fieldWidth,y:ey/fieldHeight,power:ring.power*.3,band:'echo'
-        })
+        if(sampleEdgeAt(motion,ex,ey)>.5){
+          const echo=ringPool.pop()||{
+          };
+          echo.x=ex;
+          echo.y=ey;
+          echo.radius=Math.max(2,fieldHeight*.012);
+          echo.power=ring.power*.3;
+          echo.band='echo';
+          rings.push(echo)
+        }
       }
       if(ring.power<.03||ring.radius>fieldDiagonal*1.08){
         rings.splice(i,1);
@@ -169,113 +288,74 @@ export function createSonarEngine() {
       }
     }
   }
-  function renderEnergy(shader,motion) {
-    const data=energyData.data;
-    data.fill(0);
-    const scaleX=motion.width/fieldWidth,
-    scaleY=motion.height/fieldHeight,
+  function renderEchoEnergy(shader,motion,env,live){
+    const ectx=energyCtx,
     unit=fieldHeight/270,
-    deformAmp=shader.edgeDeform*14*unit;
+    deformAmp=motion?shader.edgeDeform*(6+shader.edgeGain*8)*unit*(.7+live.wave*.5):0,
+    segments=44;
+    ectx.setTransform(1,0,0,1,0,0);
+    ectx.globalCompositeOperation='source-over';
+    ectx.globalAlpha=1;
+    ectx.clearRect(0,0,fieldWidth,fieldHeight);
+    ectx.globalCompositeOperation='lighter';
+    ectx.lineCap='round';
+    ectx.lineJoin='round';
     for(let i=0;i<rings.length;i++){
       const ring=rings[i],
       band=BAND_PARAMS[ring.band]||BAND_PARAMS.mid,
-      radius=ring.radius,
-      width=Math.max(1.1,band.width*fieldHeight*shader.ringWidth),
-      fade=clamp(1-radius/(fieldDiagonal*1.02),0,1),
-      shaped=fade>0?Math.sqrt(fade):0,
-      amp=ring.power*band.gain*shader.ringGain*.6*255*shaped;
-      if(amp<2.5)continue;
-      const amber=clamp(band.amber*shader.amberMix+(ring.band==='treble'?.35:0),0,1),
-      cr=168+(216-168)*amber,
-      cg=224+(168-224)*amber,
-      cb=184+(80-184)*amber,
-      cx=ring.x,
-      cy=ring.y,
-      outer=radius+width,
-      inner=radius-width,
-      y0=Math.max(0,Math.floor(cy-outer)),
-      y1=Math.min(fieldHeight-1,Math.ceil(cy+outer));
-      for(let y=y0;y<=y1;y++){
-        const dy=y-cy,
-        dy2=dy*dy,
-        outerSpan=outer*outer-dy2;
-        if(outerSpan<=0)continue;
-        const halfOut=Math.sqrt(outerSpan),
-        innerSpan=inner>.5?inner*inner-dy2:-1,
-        halfIn=innerSpan>0?Math.sqrt(innerSpan):0,
-        edgeRow=motion.width*((y*scaleY)|0),
-        rowOffset=y*fieldWidth;
-        for(let pass=0;pass<2;pass++){
-          const xa=Math.max(0,Math.ceil(pass===0?cx+halfIn:cx-halfOut)),
-          xb=Math.min(fieldWidth-1,Math.floor(pass===0?cx+halfOut:cx-halfIn));
-          for(let x=xa;x<=xb;x++){
-            const dx=x-cx,
-            distance=Math.sqrt(dx*dx+dy2),
-            edgeValue=motion.edge[edgeRow+((x*scaleX)|0)],
-            localRadius=radius-deformAmp*(edgeValue-.28),
-            offset=distance-localRadius,
-            gap=offset<0?-offset:offset;
-            if(gap>=width)continue;
-            let falloff=1-gap/width;
-            falloff*=falloff;
-            let alpha=falloff*amp*(.68+edgeValue*shader.edgeGain*1.5);
-            if(alpha<=0)continue;
-            const o=(rowOffset+x)*4,
-            previous=data[o+3];
-            if(previous>=255)continue;
-            if(previous+alpha>255)alpha=255-previous;
-            const newTotal=previous+alpha,
-            previousWeight=previous/newTotal,
-            newWeight=alpha/newTotal;
-            data[o]=data[o]*previousWeight+cr*newWeight;
-            data[o+1]=data[o+1]*previousWeight+cg*newWeight;
-            data[o+2]=data[o+2]*previousWeight+cb*newWeight;
-            data[o+3]=newTotal
-          }
+      width=Math.max(1.2,band.width*fieldHeight*shader.ringWidth),
+      fade=clamp(1-ring.radius/(fieldDiagonal*1.02),0,1),
+      shaped=Math.sqrt(fade),
+      amp=ring.power*band.gain*shader.ringGain*shaped*(.6+.4*env);
+      if(amp<.012)continue;
+      const tone=clamp(band.tone+shader.warmMix*.35,0,1),
+      core=shader.palette.core,
+      warm=shader.palette.warm,
+      red=Math.round(core[0]+(warm[0]-core[0])*tone),
+      green=Math.round(core[1]+(warm[1]-core[1])*tone),
+      blue=Math.round(core[2]+(warm[2]-core[2])*tone),
+      colorBase=red+','+green+','+blue;
+      ectx.beginPath();
+      for(let k=0;k<=segments;k++){
+        const angle=k/segments*Math.PI*2,
+        cos=Math.cos(angle),
+        sin=Math.sin(angle),
+        base=ring.radius;
+        let radius=base;
+        if(deformAmp>0){
+          const edgeValue=sampleEdgeAt(motion,ring.x+cos*base,ring.y+sin*base);
+          radius=base-deformAmp*(edgeValue-.28)
         }
+        const px=ring.x+cos*radius,
+        py=ring.y+sin*radius;
+        if(k===0)ectx.moveTo(px,py);
+        else ectx.lineTo(px,py)
       }
+      ectx.closePath();
+      ectx.strokeStyle='rgba('+colorBase+','+amp*.13+')';
+      ectx.lineWidth=Math.max(2.5,width*3.4);
+      ectx.stroke();
+      ectx.strokeStyle='rgba('+colorBase+','+amp*.32+')';
+      ectx.lineWidth=Math.max(1.4,width*1.5);
+      ectx.stroke();
+      ectx.strokeStyle='rgba('+colorBase+','+Math.min(1,amp*.8)+')';
+      ectx.lineWidth=clamp(width*.5,1,2);
+      ectx.stroke()
     }
     for(let i=0;i<dots.length;i++){
       const dot=dots[i],
-      power=dot.power*(1-dot.life/dot.ttl),
-      radius=(1.4+3.2*dot.power)*unit,
-      amp=power*shader.dotGain*.5*255;
-      if(amp<2)continue;
-      const amber=clamp(.45+dot.amberMix,0,1),
-      cr=168+(216-168)*amber,
-      cg=224+(168-224)*amber,
-      cb=184+(80-184)*amber,
-      y0=Math.max(0,Math.floor(dot.y-radius)),
-      y1=Math.min(fieldHeight-1,Math.ceil(dot.y+radius)),
-      x0=Math.max(0,Math.floor(dot.x-radius)),
-      x1=Math.min(fieldWidth-1,Math.ceil(dot.x+radius));
-      for(let y=y0;y<=y1;y++){
-        const dy=y-dot.y,
-        dy2=dy*dy,
-        rowOffset=y*fieldWidth;
-        for(let x=x0;x<=x1;x++){
-          const dx=x-dot.x,
-          distance=Math.sqrt(dx*dx+dy2);
-          if(distance>=radius)continue;
-          let alpha=(1-distance/radius)*amp;
-          const o=(rowOffset+x)*4,
-          previous=data[o+3];
-          if(previous>=255)continue;
-          if(previous+alpha>255)alpha=255-previous;
-          const newTotal=previous+alpha,
-          previousWeight=previous/newTotal,
-          newWeight=alpha/newTotal;
-          data[o]=data[o]*previousWeight+cr*newWeight;
-          data[o+1]=data[o+1]*previousWeight+cg*newWeight;
-          data[o+2]=data[o+2]*previousWeight+cb*newWeight;
-          data[o+3]=newTotal
-        }
-      }
+      life=1-dot.life/dot.ttl,
+      alpha=clamp(dot.power*life*shader.dotGain*(.4+.6*env),0,1);
+      if(alpha<.02)continue;
+      const size=(2.5+6.5*dot.power)*unit*1.2,
+      sprite=dot.warm||shader.warmMix>.4?glowWarm:glowAmber;
+      ectx.globalAlpha=alpha*.9;
+      ectx.drawImage(sprite,dot.x-size/2,dot.y-size/2,size,size)
     }
-    energyCtx.putImageData(energyData,0,0);
-    return energyData
+    ectx.globalAlpha=1;
+    ectx.globalCompositeOperation='source-over'
   }
-  function buildMask(motion,level,edgeControl) {
+  function buildReveal(motion,level,edgeControl,shader){
     if(!maskSourceData||maskSourceWidth!==motion.width||maskSourceHeight!==motion.height){
       maskSource.width=motion.width;
       maskSource.height=motion.height;
@@ -284,37 +364,203 @@ export function createSonarEngine() {
       maskSourceHeight=motion.height
     }
     const out=maskSourceData.data,
-    motionArray=motion.motion,
     edgeArray=motion.edge,
-    threshold=level==='sutil'?.3:.08,
+    structure=motion.structure,
+    fill=shader.palette.fill,
+    threshold=clamp((level==='sutil'?.34:.14)-(edgeControl-.5)*.1,.06,.6),
     span=1/(1-threshold),
-    motionGain=level==='sutil'?.55:.95,
-    alphaGain=clamp(.5+edgeControl*.8,0,1.15);
+    edgeOnly=level==='sutil';
     for(let i=0,o=0;i<edgeArray.length;i++,o+=4){
       let value=edgeArray[i];
-      const movement=motionArray[i]*motionGain;
-      if(movement>value)value=movement;
-      value=(value-threshold)*span;
-      out[o]=96;
-      out[o+1]=224;
-      out[o+2]=164;
-      out[o+3]=Math.min(255,clamp(value,0,1)*255*alphaGain)
+      if(!edgeOnly){
+        const smoothed=structure[i];
+        if(smoothed>value)value=smoothed
+      }
+      let reveal=(value-threshold)*span;
+      if(reveal<=0){
+        out[o+3]=0;
+        continue
+      }
+      if(edgeOnly){
+        if(reveal>1)reveal=1
+      }
+      else reveal=Math.min(1,reveal*2.4);
+      out[o]=fill[0];
+      out[o+1]=fill[1];
+      out[o+2]=fill[2];
+      out[o+3]=reveal*255
     }
     maskSourceCtx.putImageData(maskSourceData,0,0);
     maskCtx.globalCompositeOperation='source-over';
     maskCtx.globalAlpha=1;
     maskCtx.clearRect(0,0,fieldWidth,fieldHeight);
     maskCtx.drawImage(maskSource,0,0,fieldWidth,fieldHeight);
-    if(level==='visivel'){
-      maskCtx.globalCompositeOperation='lighter';
-      maskCtx.globalAlpha=.55;
-      maskCtx.drawImage(maskSource,1.5,1.5,fieldWidth,fieldHeight);
-      maskCtx.globalCompositeOperation='source-over';
-      maskCtx.globalAlpha=1
-    }
+    blurCtx.clearRect(0,0,blurWidth,blurHeight);
+    blurCtx.drawImage(maskSource,0,0,blurWidth,blurHeight);
     return maskCanvas
   }
-  function renderUnderlay(source) {
+  function renderSilhouette(shader,env,bands,live){
+    const ectx=energyCtx,
+    bass=bands.bass*shader.bandBass,
+    mid=bands.mid*shader.bandMid,
+    treble=bands.treble*shader.bandTreble;
+    ectx.setTransform(1,0,0,1,0,0);
+    ectx.globalCompositeOperation='source-over';
+    ectx.globalAlpha=1;
+    ectx.clearRect(0,0,fieldWidth,fieldHeight);
+    ectx.globalCompositeOperation='lighter';
+    const base=clamp(env*(.55+.45*Math.min(1,mid)),0,1),
+    fillAlpha=clamp(shader.fillAlpha*(.6+.4*live.green)*base*(1+treble*.12),0,1);
+    if(fillAlpha>.004){
+      ectx.globalAlpha=fillAlpha;
+      ectx.drawImage(maskCanvas,0,0,fieldWidth,fieldHeight)
+    }
+    const blotchAlpha=clamp(env*bass*.5*(.6+.4*live.wave),0,.5);
+    if(blotchAlpha>.005){
+      ectx.globalAlpha=blotchAlpha;
+      ectx.drawImage(blurCanvas,0,0,fieldWidth,fieldHeight)
+    }
+    ectx.globalAlpha=1;
+    ectx.globalCompositeOperation='source-over'
+  }
+  function ensureContour(motion){
+    if(!contourData||contourWidth!==motion.width||contourHeight!==motion.height){
+      contourSource.width=motion.width;
+      contourSource.height=motion.height;
+      contourData=contourCtx.createImageData(motion.width,motion.height);
+      contourWidth=motion.width;
+      contourHeight=motion.height;
+      jitterRows=new Float32Array(motion.height);
+      blockCols=Math.ceil(motion.width/8);
+      blockRows=Math.ceil(motion.height/8);
+      blockMean=new Float32Array(blockCols*blockRows)
+    }
+  }
+  function writeContourThin(motion,env,shader){
+    ensureContour(motion);
+    const out=contourData.data,
+    edgeArray=motion.edge,
+    core=shader.palette.core,
+    warm=shader.palette.warm,
+    threshold=.3,
+    span=1/(1-threshold);
+    for(let i=0,o=0;i<edgeArray.length;i++,o+=4){
+      let value=(edgeArray[i]-threshold)*span;
+      if(value<=0){
+        out[o+3]=0;
+        continue
+      }
+      if(value>1)value=1;
+      const alpha=clamp(value*1.6*env*shader.contourAlpha,0,1);
+      out[o]=core[0]+(warm[0]-core[0])*value;
+      out[o+1]=core[1]+(warm[1]-core[1])*value;
+      out[o+2]=core[2]+(warm[2]-core[2])*value;
+      out[o+3]=alpha*255
+    }
+    contourCtx.putImageData(contourData,0,0)
+  }
+  function renderContourThin(shader,motion,env){
+    const ectx=energyCtx;
+    writeContourThin(motion,env,shader);
+    ectx.globalCompositeOperation='lighter';
+    ectx.globalAlpha=1;
+    ectx.drawImage(contourSource,0,0,fieldWidth,fieldHeight);
+    ectx.globalCompositeOperation='source-over'
+  }
+  function writeContourInfrared(motion,env,bands,shader,live,t){
+    ensureContour(motion);
+    const width=motion.width,
+    height=motion.height,
+    edgeArray=motion.edge,
+    out=contourData.data,
+    jitterAmp=shader.jitter*(.35+.85*Math.min(1,bands.treble*shader.bandTreble))*(.4+.6*live.glitch),
+    jitterOn=jitterAmp>.05;
+    if(jitterOn){
+      for(let y=0;y<height;y++)jitterRows[y]=Math.round((Math.sin(t*.006+y*.63)+Math.sin(t*.0133+y*1.87)*.6)*jitterAmp*.5)
+    }
+    blockMean.fill(0);
+    for(let y=0;y<height;y++){
+      const row=y*width,
+      blockY=(y/8)|0,
+      blockRow=blockY*blockCols;
+      for(let x=0;x<width;x++)blockMean[blockRow+((x/8)|0)]+=edgeArray[row+x]
+    }
+    const blockArea=64;
+    for(let b=0;b<blockMean.length;b++)blockMean[b]/=blockArea;
+    const midGain=.55+.45*Math.min(1,bands.mid*shader.bandMid);
+    for(let y=0;y<height;y++){
+      const row=y*width,
+      blockRow=((y/8)|0)*blockCols,
+      jitter=jitterOn?jitterRows[y]:0;
+      for(let x=0;x<width;x++){
+        const sampleX=clamp(x-jitter,0,width-1),
+        i=row+sampleX,
+        threshold=blockMean[blockRow+((x/8)|0)]*2.05,
+        limit=threshold<.12?.12:threshold,
+        value=(edgeArray[i]-limit)/(1-limit);
+        const o=(row+x)*4;
+        if(value<=0){
+          out[o+3]=0;
+          continue
+        }
+        const alpha=clamp(value*(.7+1.6*value)*env*midGain,0,1),
+        intensity=clamp(value*1.5*(.6+.6*Math.min(1,bands.treble*shader.bandTreble)),0,1),
+        rampIndex=(intensity*63)|0,
+        rampOffset=rampIndex*3;
+        out[o]=infraRamp[rampOffset];
+        out[o+1]=infraRamp[rampOffset+1];
+        out[o+2]=infraRamp[rampOffset+2];
+        out[o+3]=alpha*255
+      }
+    }
+    contourCtx.putImageData(contourData,0,0)
+  }
+  function renderInfrared(shader,motion,env,bands,live,t){
+    const ectx=energyCtx;
+    ectx.setTransform(1,0,0,1,0,0);
+    ectx.globalCompositeOperation='source-over';
+    ectx.globalAlpha=1;
+    ectx.clearRect(0,0,fieldWidth,fieldHeight);
+    writeContourInfrared(motion,env,bands,shader,live,t);
+    ectx.globalCompositeOperation='lighter';
+    ectx.drawImage(contourSource,0,0,fieldWidth,fieldHeight);
+    ectx.globalCompositeOperation='source-over'
+  }
+  function updateAndDrawSmoke(shader,motion,env,bands,live,dt,t){
+    const ectx=energyCtx,
+    unit=fieldHeight/270,
+    treble=Math.min(1,bands.treble*shader.bandTreble);
+    ectx.globalCompositeOperation='lighter';
+    for(let i=smoke.length-1;i>=0;i--){
+      const particle=smoke[i];
+      particle.life+=dt;
+      if(particle.life>=particle.ttl){
+        smoke.splice(i,1);
+        smokePool.push(particle);
+        continue
+      }
+      const noise=vnoise(particle.x*.012+particle.seed,particle.y*.012-t*.00012),
+      targetVx=(noise-.5)*30*unit*(1+treble*1.6),
+      targetVy=-(10+24*(.4+treble))*unit*.9;
+      particle.vx+=(targetVx-particle.vx)*.2;
+      particle.vy+=(targetVy-particle.vy)*.2;
+      particle.x+=particle.vx*dt;
+      particle.y+=particle.vy*dt;
+      if(particle.x<0)particle.x=0;
+      else if(particle.x>fieldWidth)particle.x=fieldWidth;
+      const progress=particle.life/particle.ttl,
+      fade=Math.sin(Math.PI*progress),
+      alpha=clamp(fade*fade*.26*(.3+.7*env)*shader.smoke,0,1);
+      if(alpha<.012)continue;
+      const size=particle.size*unit*(1+progress*.9),
+      sprite=particle.warm||shader.warmMix>.35?glowSmokeWarm:glowSmoke;
+      ectx.globalAlpha=alpha;
+      ectx.drawImage(sprite,particle.x-size/2,particle.y-size/2,size,size)
+    }
+    ectx.globalAlpha=1;
+    ectx.globalCompositeOperation='source-over'
+  }
+  function renderUnderlay(source,shader,level){
     const sourceWidth=source.videoWidth,
     sourceHeight=source.videoHeight;
     if(!sourceWidth||!sourceHeight)return false;
@@ -323,24 +569,33 @@ export function createSonarEngine() {
     underCtx.clearRect(0,0,fieldWidth,fieldHeight);
     const scale=Math.max(fieldWidth/sourceWidth,fieldHeight/sourceHeight)||1,
     drawWidth=sourceWidth*scale,
-    drawHeight=sourceHeight*scale;
+    drawHeight=sourceHeight*scale,
+    tint=shader.videoTint;
+    underCtx.filter='grayscale(1)';
     underCtx.drawImage(source,(fieldWidth-drawWidth)/2,(fieldHeight-drawHeight)/2,drawWidth,drawHeight);
+    underCtx.filter='none';
     underCtx.globalCompositeOperation='multiply';
-    underCtx.fillStyle='rgb(158,232,182)';
+    underCtx.fillStyle='rgb('+tint[0]+','+tint[1]+','+tint[2]+')';
     underCtx.fillRect(0,0,fieldWidth,fieldHeight);
+    underCtx.globalCompositeOperation='lighter';
+    underCtx.globalAlpha=level==='visivel'?.14:.08;
+    const veil=shader.palette.veil;
+    underCtx.fillStyle='rgb('+veil[0]+','+veil[1]+','+veil[2]+')';
+    underCtx.fillRect(0,0,fieldWidth,fieldHeight);
+    underCtx.globalAlpha=1;
     underCtx.globalCompositeOperation='destination-in';
     underCtx.drawImage(maskCanvas,0,0);
     underCtx.globalCompositeOperation='source-over';
     return true
   }
-  function accumulate(decay) {
+  function accumulate(decay,additive){
     backCtx.globalCompositeOperation='source-over';
     backCtx.globalAlpha=1;
     backCtx.clearRect(0,0,fieldWidth,fieldHeight);
     backCtx.globalAlpha=decay;
     backCtx.drawImage(frontCanvas,0,0);
     backCtx.globalAlpha=1;
-    backCtx.globalCompositeOperation='lighter';
+    backCtx.globalCompositeOperation=additive?'lighter':'source-over';
     backCtx.drawImage(energyCanvas,0,0);
     backCtx.globalCompositeOperation='source-over';
     const swapCanvas=frontCanvas;
@@ -351,39 +606,44 @@ export function createSonarEngine() {
     backCtx=swapCtx
   }
   function compose(displayCtx,{
-    width,height,videoLevel,videoGain,vivid,breath,blindSpot
-  }) {
+    width,height,underlayReady,videoAlpha,breathColor,blindSpot,emitterScreenX,emitterScreenY
+  }){
     displayCtx.globalCompositeOperation='source-over';
     displayCtx.globalAlpha=1;
-    if(videoLevel>0&&videoGain>0){
-      displayCtx.globalAlpha=clamp(videoLevel*videoGain*(.35+vivid*.65),0,.6);
-      displayCtx.drawImage(underCanvas,0,0,width,height)
+    displayCtx.fillStyle=breathColor;
+    displayCtx.fillRect(0,0,width,height);
+    if(underlayReady&&videoAlpha>0){
+      displayCtx.globalAlpha=clamp(videoAlpha,0,1);
+      displayCtx.drawImage(underCanvas,0,0,width,height);
+      displayCtx.globalAlpha=1
     }
     displayCtx.globalCompositeOperation='lighter';
-    displayCtx.globalAlpha=clamp(breath,0,1);
     displayCtx.drawImage(frontCanvas,0,0,width,height);
     displayCtx.globalCompositeOperation='source-over';
-    displayCtx.globalAlpha=1;
-    const bx=width*emitter.x,
-    by=height*emitter.y,
-    radius=blindSpot,
-    gradient=displayCtx.createRadialGradient(bx,by,0,bx,by,radius);
-    gradient.addColorStop(0,'rgba(0,0,0,1)');
-    gradient.addColorStop(.62,'rgba(0,0,0,.92)');
-    gradient.addColorStop(1,'rgba(0,0,0,0)');
-    displayCtx.globalCompositeOperation='destination-out';
-    displayCtx.fillStyle=gradient;
-    displayCtx.fillRect(bx-radius,by-radius,radius*2,radius*2);
-    displayCtx.globalCompositeOperation='source-over'
+    if(blindSpot>0){
+      const gradient=displayCtx.createRadialGradient(emitterScreenX,emitterScreenY,0,emitterScreenX,emitterScreenY,blindSpot);
+      gradient.addColorStop(0,'rgba(0,0,0,1)');
+      gradient.addColorStop(.62,'rgba(0,0,0,.92)');
+      gradient.addColorStop(1,'rgba(0,0,0,0)');
+      displayCtx.globalCompositeOperation='destination-out';
+      displayCtx.fillStyle=gradient;
+      displayCtx.fillRect(emitterScreenX-blindSpot,emitterScreenY-blindSpot,blindSpot*2,blindSpot*2);
+      displayCtx.globalCompositeOperation='source-over'
+    }
   }
   return{
     resize,
     reset,
     spawnRing,
-    spawnTreble,
+    spawnDots,
+    spawnSmoke,
     step,
-    renderEnergy,
-    buildMask,
+    renderEchoEnergy,
+    buildReveal,
+    renderSilhouette,
+    renderContourThin,
+    renderInfrared,
+    updateAndDrawSmoke,
     renderUnderlay,
     accumulate,
     compose,

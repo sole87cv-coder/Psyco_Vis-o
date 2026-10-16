@@ -49,11 +49,13 @@ import {
 }
 from './motion.js';
 import {
-  measureAudioBands
+  measureAudioBands,
+  updateEnvelope,
+  syntheticEnvelope
 }
 from './audio.js';
 import {
-  createSonarEngine
+  createDreamEngine
 }
 from './renderers.js';
 (()=>{
@@ -85,13 +87,19 @@ from './renderers.js';
   lastAudioLog=0,
   hiddenStopTimer=0,
   adaptiveScale=1,
-  measuredFrameMs=16,
+  measuredFrameMs=8,
   frameWindowTime=0,
   frameWindowFrames=0,
+  frameWorkSum=0,
   poorAccumMs=0,
   goodAccumMs=0,
   motionActivity=0,
-  firstDraw=true;
+  firstDraw=true,
+  loopActive=false,
+  rafErrorLogged=false,
+  cameraGestureArmed=false,
+  envelope=0,
+  lastEnvelope=0;
   const saved=readStorageJSON('psyco_visao_settings',readStorageJSON('wut-settings'));
   const videoLevels=VIDEO_LEVELS,
   savedVisual=readStorageJSON('psyco_visao_visual',readStorageJSON('weburutao_visual')),
@@ -108,7 +116,7 @@ from './renderers.js';
     willReadFrequently:true
   });
   const analysisState=createMotionState(ANALYSIS_WIDTH,ANALYSIS_HEIGHT);
-  const sonar=createSonarEngine();
+  const dreamField=createDreamEngine();
   const hud=createHud({
     idleMs:HUD.idleMs
   });
@@ -117,7 +125,13 @@ from './renderers.js';
   bandsSmooth=new Float32Array(8),
   bandsMax=new Float32Array(8).fill(1e-6),
   timeData=new Float32Array(512),
-  freqData=new Float32Array(256);
+  freqData=new Float32Array(256),
+  bandLive={
+    bass:0,mid:0,treble:0
+  },
+  liveParams={
+    green:.72,wave:0,fish:0,glitch:0,vivid:.72
+  };
   let micStartedAt=0,
   noiseSum=0,
   noiseFrames=0,
@@ -142,7 +156,7 @@ from './renderers.js';
   }
   function setVideoPresence(level){
     if(!Object.prototype.hasOwnProperty.call(videoLevels,level))return;
-    if(level!==activeVideoLevel)sonar.reset();
+    if(level!==activeVideoLevel)dreamField.reset();
     videoPresenceFrom=videoPresence;
     videoPresenceTarget=videoLevels[level];
     videoPresenceStart=performance.now();
@@ -179,8 +193,8 @@ from './renderers.js';
     ctx.imageSmoothingEnabled=true;
     ctx.imageSmoothingQuality='high';
     const field=desiredFieldSize();
-    if(!sonar.width||Math.abs(field.height/sonar.height-1)>.06){
-      sonar.resize(field.width,field.height);
+    if(!dreamField.width||Math.abs(field.height/dreamField.height-1)>.06){
+      dreamField.resize(field.width,field.height);
       resetMotionState(analysisState);
       lastSilenceAt=performance.now()
     }
@@ -194,14 +208,15 @@ from './renderers.js';
     button.classList.toggle('active',active);
     button.setAttribute('aria-pressed',String(active))
   });
-  let activeShader=getDreamShader($('#mode').value,activeDreamPreset,0);
-  function updateFrameBudget(dt){
+  function updateFrameBudget(dt,workMs){
     frameWindowTime+=dt;
     frameWindowFrames++;
+    frameWorkSum+=workMs||0;
     if(frameWindowTime<1)return;
-    measuredFrameMs=frameWindowTime*1000/frameWindowFrames;
+    measuredFrameMs=frameWorkSum/Math.max(1,frameWindowFrames);
     frameWindowTime=0;
     frameWindowFrames=0;
+    frameWorkSum=0;
     if(document.visibilityState==='hidden'){
       poorAccumMs=0;
       goodAccumMs=0;
@@ -230,19 +245,6 @@ from './renderers.js';
       goodAccumMs=0
     }
   }
-  function pickEdgePoint(){
-    const width=analysisState.width,
-    edge=analysisState.edge;
-    for(let attempt=0;attempt<8;attempt++){
-      const index=(Math.random()*edge.length)|0;
-      if(edge[index]>.42)return{
-        x:(index%width)/width,y:((index/width)|0)/analysisState.height
-      }
-    }
-    return{
-      x:.25+Math.random()*.5,y:.2+Math.random()*.6
-    }
-  }
   function sampleAudio(now){
     if(!analyser||!audioCtx)return;
     analyser.getFloatTimeDomainData(timeData);
@@ -256,7 +258,7 @@ from './renderers.js';
     if(now-micStartedAt<3000){
       noiseSum+=rms;
       noiseFrames++;
-      audioState[10]=noiseSum/noiseFrames
+      audioState[10]=Math.min(noiseSum/noiseFrames,.05)
     }
     else if(!noiseFrames){
       noiseFrames=1;
@@ -294,55 +296,66 @@ from './renderers.js';
       lastAudioLog=now
     }
   }
-  function updateSonarSpawns(t){
-    const shader=activeShader,
-    now=audioState[9]||t,
-    sensitivity=+$('#sens').value/40,
-    gate=Math.max(.004,Math.max(+$('#gate').value/1000,audioState[10]*1.5)/Math.max(.25,sensitivity)),
-    rms=audioState[0],
-    above=Math.max(0,rms-gate);
-    if(analyser){
-      const triggered=(audioState[7]>0&&rms>gate)||above>.006/Math.max(.25,sensitivity);
-      if(triggered&&now-lastPulseAt>(audioState[7]?90:140)){
-        const strength=clamp((.14+above*14+audioState[8]*.7)*sensitivity,0,1),
-        bass=audioState[3],
-        mid=audioState[4],
-        treble=audioState[5];
-        if(treble>bass*1.12&&strength>.2)sonar.spawnTreble(Math.round(5+treble*11),strength,pickEdgePoint,shader.amberMix);
-        else if(bass>=mid)sonar.spawnRing({
-          power:clamp(strength*1.15,0,1),band:'bass'
+  function updateSpawns(t,shader,env){
+    const now=t,
+    mode=shader.mode;
+    if(mode==='abstract'){
+      const sensitivity=+$('#sens').value/40,
+      gate=Math.max(.004,Math.max(+$('#gate').value/1000,audioState[10]*1.5)/Math.max(.25,sensitivity)),
+      rms=audioState[0],
+      above=Math.max(0,rms-gate),
+      bass=audioState[3],
+      mid=audioState[4],
+      treble=audioState[5],
+      rise=env-lastEnvelope;
+      let triggered=false;
+      if(analyser){
+        triggered=((audioState[7]>0&&rms>gate)||above>.006/Math.max(.25,sensitivity))&&now-lastPulseAt>(audioState[7]?90:140)
+      }
+      else{
+        triggered=rise>.018&&env>.09&&now-lastPulseAt>420
+      }
+      if(triggered){
+        const strength=clamp((.14+(analyser?above*14:env*.8)+audioState[8]*.7)*sensitivity,0,1);
+        if(analyser&&treble>bass*1.12&&strength>.2)dreamField.spawnDots(Math.round(3+treble*8*(.6+liveParams.fish*.8)),strength,analysisState);
+        else if(analyser&&bass<mid)dreamField.spawnRing({
+          power:strength*.9,band:'mid'
         });
-        else sonar.spawnRing({
-          power:strength,band:'mid'
+        else dreamField.spawnRing({
+          power:clamp(strength*1.15,0,1),band:'bass'
         });
         lastPulseAt=now;
         lastSilenceAt=now;
         hud.noteActivity()
       }
       else if(now-lastSilenceAt>2000/shader.breathRate){
-        sonar.spawnRing({
-          power:.06+shader.breathDepth*.06,band:'bass'
+        dreamField.spawnRing({
+          power:.05+shader.breathDepth*.05,band:'bass'
         });
         lastSilenceAt=now
       }
-      if((bandsSmooth[6]+bandsSmooth[7])*.5>.42&&Math.random()<.1)sonar.spawnTreble(2,clamp(bandsSmooth[6],0,1),pickEdgePoint,shader.amberMix)
+      if(analyser&&(bandsSmooth[6]+bandsSmooth[7])*.5>.42&&Math.random()<.1)dreamField.spawnDots(2,clamp(bandsSmooth[6],0,1),analysisState)
     }
-    else if(motionActivity>.002&&now-lastPulseAt>260){
-      sonar.spawnRing({
-        power:clamp(.12+motionActivity*40,0,1),band:'mid'
-      });
-      lastPulseAt=now;
-      lastSilenceAt=now
+    else if(mode==='both'&&shader.smoke>0){
+      dreamField.spawnSmoke(env,audioState[4],audioState[5],liveParams.wave,analysisState)
     }
-    else if(now-lastSilenceAt>2200/shader.breathRate){
-      sonar.spawnRing({
-        power:.06+shader.breathDepth*.06,band:'bass'
-      });
-      lastSilenceAt=now
+    lastEnvelope=env
+  }
+  function maybeStartLoop(){
+    if(loopActive||document.visibilityState==='hidden')return;
+    loopActive=true;
+    last=0;
+    raf=requestAnimationFrame(draw)
+  }
+  function maybeStopLoop(){
+    loopActive=false;
+    if(raf){
+      cancelAnimationFrame(raf);
+      raf=0
     }
   }
-  function draw(t){
-    raf=requestAnimationFrame(draw);
+  function frame(t){
+    const workStart=performance.now();
     if(firstDraw){
       firstDraw=false;
       ctx.setTransform(dpr,0,0,dpr,0,0);
@@ -354,31 +367,41 @@ from './renderers.js';
     }
     const dt=Math.min((t-last)/1000||.016,.06);
     last=t;
-    updateFrameBudget(dt);
     sampleAudio(t);
     const shader=getDreamShader($('#mode').value,activeDreamPreset,t,reducedMotionQuery?.matches);
-    activeShader=shader;
     const hasCam=video.readyState>=2&&video.videoWidth>0;
     if(hasCam){
       const crop=coverRect(video.videoWidth,video.videoHeight,ANALYSIS_WIDTH,ANALYSIS_HEIGHT);
       motionReadCtx.drawImage(video,crop.sx,crop.sy,crop.sw,crop.sh,0,0,ANALYSIS_WIDTH,ANALYSIS_HEIGHT);
-      const frame=motionReadCtx.getImageData(0,0,ANALYSIS_WIDTH,ANALYSIS_HEIGHT);
+      const frameData=motionReadCtx.getImageData(0,0,ANALYSIS_WIDTH,ANALYSIS_HEIGHT);
       if(analysisState.hasPrevious){
-        analyzeMotionFrame(frame.data,analysisState,+$('#edge').value/100,true);
+        analyzeMotionFrame(frameData.data,analysisState,+$('#edge').value/100,true);
         motionActivity=analysisState.activity
       }
       else{
-        analyzeMotionFrame(frame.data,analysisState,+$('#edge').value/100,false);
+        analyzeMotionFrame(frameData.data,analysisState,+$('#edge').value/100,false);
         analysisState.motion.fill(0);
+        analysisState.structure.fill(0);
         motionActivity=0
       }
     }
-    updateSonarSpawns(t);
     const sensitivity=+$('#sens').value/40,
     gate=Math.max(.004,Math.max(+$('#gate').value/1000,audioState[10]*1.5)/Math.max(.25,sensitivity)),
-    rmsEnvelope=analyser?clamp(Math.max(0,audioState[0]-gate)*14+audioState[8]*.6,0,1):clamp(motionActivity*30,0,1);
-    sonar.step(dt,{
-      shader,rmsEnvelope,motion:analysisState
+    release=+$('#smoothing').value/100;
+    let envelopeTarget=analyser?clamp(Math.max(0,audioState[1]-gate)*14+audioState[8]*.6,0,1):syntheticEnvelope(t);
+    if(!analyser&&motionActivity>.0015)envelopeTarget=Math.max(envelopeTarget,Math.min(.45,motionActivity*10));
+    envelope=updateEnvelope(envelope,envelopeTarget,.5,shader.reduced?.35:Math.max(.08,(1-release)*.3));
+    bandLive.bass=clamp(audioState[3]*shader.bandBass,0,1);
+    bandLive.mid=clamp(audioState[4]*shader.bandMid,0,1);
+    bandLive.treble=clamp(audioState[5]*shader.bandTreble,0,1);
+    liveParams.green=+$('#green').value/100;
+    liveParams.wave=+$('#wave').value/100;
+    liveParams.fish=+$('#fish').value/100;
+    liveParams.glitch=+$('#glitch').value/100;
+    liveParams.vivid=+$('#vivid').value/100;
+    updateSpawns(t,shader,envelope);
+    dreamField.step(dt,{
+      shader,rmsEnvelope:envelope,motion:analysisState
     });
     if(videoPresence!==videoPresenceTarget){
       const progress=clamp((t-videoPresenceStart)/600,0,1),
@@ -386,33 +409,62 @@ from './renderers.js';
       videoPresence=videoPresenceFrom+(videoPresenceTarget-videoPresenceFrom)*ease;
       if(progress===1)videoPresenceFrom=videoPresenceTarget
     }
-    let decay=clamp(shader.decay+((+$('#trail').value/100)-.84)*.08,.86,.965);
-    if(shader.reduced)decay=Math.min(decay,.905);
+    let decay=clamp(shader.decay+((+$('#trail').value/100)-.84)*.08,shader.decayMin,shader.decayMax);
+    if(shader.reduced)decay=Math.min(decay,shader.decayMin+.02);
+    const mode=shader.mode,
+    level=activeVideoLevel,
+    needsMask=hasCam&&(level!=='oculto'||mode==='silhouette'||mode==='both');
     let underlay=false;
-    if(hasCam&&activeVideoLevel!=='oculto'){
-      sonar.buildMask(analysisState,activeVideoLevel,+$('#edge').value/100);
-      underlay=sonar.renderUnderlay(video)
+    if(needsMask){
+      dreamField.buildReveal(analysisState,level==='oculto'?'visivel':level,+$('#edge').value/100,shader);
+      if(level!=='oculto')underlay=dreamField.renderUnderlay(video,shader,level)
     }
-    sonar.renderEnergy(shader,analysisState);
-    sonar.accumulate(decay);
-    const vivid=+$('#vivid').value/100,
-    breath=clamp((.62+vivid*.38)*(.94+.06*Math.sin(t*.00045*shader.breathRate))+(analyser?audioState[1]*.3:0),0,1),
-    blindSpot=Math.max(24,h*(.05+shader.breathDepth*.012+audioState[1]*.3));
+    if(mode==='abstract')dreamField.renderEchoEnergy(shader,analysisState,envelope,liveParams);
+    else if(mode==='silhouette')dreamField.renderSilhouette(shader,envelope,bandLive,liveParams);
+    else if(mode==='both'){
+      dreamField.renderSilhouette(shader,envelope,bandLive,liveParams);
+      if(hasCam)dreamField.renderContourThin(shader,analysisState,envelope);
+      if(shader.smoke>0)dreamField.updateAndDrawSmoke(shader,analysisState,envelope,bandLive,liveParams,dt,t)
+    }
+    else if(hasCam)dreamField.renderInfrared(shader,analysisState,envelope,bandLive,liveParams,t);
+    dreamField.accumulate(decay,mode==='abstract'||mode==='outline');
+    const breath=.5+.5*Math.sin(t*.00045*shader.breathRate),
+    breathLevel=Math.round(.4+4.6*shader.breathDepth*breath),
+    breathColor='rgb('+(breathLevel>0?breathLevel:0)+','+breathLevel+','+(breathLevel>0?breathLevel-1:0)+')',
+    videoAlpha=underlay?clamp(videoPresence*(level==='visivel'?shader.videoGainVisivel:shader.videoGainSutil)*envelope,0,.6):0,
+    blindSpot=shader.blindSpot?Math.max(24,h*(.05+shader.breathDepth*.012+audioState[1]*.3)):0;
     ctx.setTransform(dpr,0,0,dpr,0,0);
-    ctx.globalCompositeOperation='source-over';
-    ctx.globalAlpha=1;
-    ctx.fillStyle='#000000';
-    ctx.fillRect(0,0,w,h);
-    sonar.compose(ctx,{
-      width:w,height:h,videoLevel:underlay?videoPresence:0,videoGain:shader.videoGain,vivid,breath,blindSpot
+    dreamField.compose(ctx,{
+      width:w,height:h,
+      underlayReady:underlay,
+      videoAlpha,
+      breathColor,
+      blindSpot,
+      emitterScreenX:w*.5,
+      emitterScreenY:h*.97
     });
-    const flash=clamp(audioState[2]*.05+audioState[8]*.012,0,.03);
+    const flash=clamp(audioState[2]*.05+audioState[8]*.012,0,.028);
     if(flash>.008){
-      ctx.fillStyle='rgba(150,255,190,'+flash+')';
-      ctx.fillRect(0,0,w,h)
+      const palette=shader.palette.flash;
+      ctx.globalCompositeOperation='lighter';
+      ctx.fillStyle='rgba('+palette[0]+','+palette[1]+','+palette[2]+','+flash+')';
+      ctx.fillRect(0,0,w,h);
+      ctx.globalCompositeOperation='source-over'
+    }
+    updateFrameBudget(dt,performance.now()-workStart)
+  }
+  function draw(t){
+    raf=requestAnimationFrame(draw);
+    try{
+      frame(t)
+    }
+    catch(error){
+      if(!rafErrorLogged){
+        rafErrorLogged=true;
+        console.warn('[Psyco_Visão][LOOP] Uma exceção foi contida e registrada apenas uma vez.',error)
+      }
     }
   }
-  draw(0);
 
   function notify(s){
     const n=$('#notice');
@@ -441,7 +493,8 @@ from './renderers.js';
     document.body.classList.toggle('dream-awake',state==='on');
     document.body.dataset.cam=state;
     if(state==='denied'||state==='error')hud.setError('camera');
-    else if(state==='on'||state==='off')hud.clearError('camera')
+    else if(state==='on'||state==='off')hud.clearError('camera');
+    if(state==='off'||state==='denied'||state==='error')maybeStartLoop()
   }
   function refreshCameraChoices(){
     if(!navigator.mediaDevices?.enumerateDevices){
@@ -568,6 +621,7 @@ from './renderers.js';
       attachCameraTrack(nextStream);
       if(previousStream&&previousStream!==nextStream)previousStream.getTracks().forEach(t=>t.stop());
       updateCameraState('on');
+      maybeStartLoop();
       refreshCameraChoices();
       if(!recovery&&!switching)notify('O olho está aberto. A imagem fica neste aparelho.');
       return true
@@ -750,7 +804,7 @@ from './renderers.js';
   }
   function cycleMode(){
     const select=$('#mode'),
-    order=['silhouette','outline','both','abstract'];
+    order=['abstract','silhouette','both','outline'];
     select.value=order[(order.indexOf(select.value)+1)%order.length];
     select.dispatchEvent(new Event('change',{
       bubbles:true
@@ -978,12 +1032,14 @@ from './renderers.js';
     'Módulos e interface: carregados',
     'Canvas: '+(canvasOk?'funcionando':'não iniciado'),
     'Câmera: '+(cameraApi?cameraState:'API indisponível')+(video.readyState>=2?' · imagem recebida':''),
-    'Microfone: '+($('#micEnable').checked?'ativado':'desativado · opcional'),
+    'Microfone: '+($('#micEnable').checked?'ativado':'desativado · envelope sintético'),
     'Toque: '+(('ontouchstart' in window||navigator.maxTouchPoints>0)?'disponível':'não detectado'),
     'Animação reduzida pelo sistema: '+(reducedMotionQuery?.matches?'ativado':'desativado'),
     'Análise do movimento: '+ANALYSIS_WIDTH+' × '+ANALYSIS_HEIGHT,
-    'Campo do sonar: '+sonar.width+' × '+sonar.height,
+    'Campo do sonho: '+dreamField.width+' × '+dreamField.height,
+    'Modo de imagem: '+($('#mode').options[$('#mode').selectedIndex]?.textContent||$('#mode').value),
     'Escala de render: '+dpr.toFixed(2)+' (adaptativa '+adaptiveScale.toFixed(2)+')',
+    'Quadro médio: '+measuredFrameMs.toFixed(1)+' ms de trabalho',
     'Armazenamento local: '+storage,
     'Vídeo selecionado: '+activeVideoLevel.toUpperCase(),
     'Dica inicial: '+(uiMemory.hintSeen?'dispensada':'ainda visível')].join('\n');
@@ -1036,7 +1092,7 @@ from './renderers.js';
       const src=audioCtx.createMediaStreamSource(micStream);
       analyser=audioCtx.createAnalyser();
       analyser.fftSize=512;
-      analyser.smoothingTimeConstant=0;
+      analyser.smoothingTimeConstant=.7;
       src.connect(analyser);
       freqData.fill(-120);
       timeData.fill(0);
@@ -1067,10 +1123,10 @@ from './renderers.js';
       analyser=null;
       audioCtx?.close();
       audioCtx=null;
-      console.error('[Psyco_Visão][AUDIO] Falha na captura',err);
+      console.warn('[Psyco_Visão][AUDIO] Falha na captura (o envelope sintético assume)',err);
       e.target.checked=false;
       updateMicState('error');
-      notify(err.name==='NotAllowedError'?'Permita o microfone nas configurações do navegador.':err.name==='NotFoundError'?'Não encontramos um microfone neste aparelho.':err.name==='NotReadableError'?'O microfone pode estar sendo usado por outro aplicativo. Feche esse aplicativo e tente de novo.':'Não foi possível ligar o som. Confira a permissão do microfone e tente outra vez.')
+      notify(err.name==='NotAllowedError'?'Permita o microfone nas configurações do navegador. O sonho segue respirando sozinho.':err.name==='NotFoundError'?'Não encontramos um microfone neste aparelho. O sonho segue respirando sozinho.':err.name==='NotReadableError'?'O microfone pode estar sendo usado por outro aplicativo. Feche esse aplicativo e tente de novo.':'Não foi possível ligar o som. Confira a permissão do microfone e tente outra vez.')
     }
   };
   $('#copyLink').onclick=async()=>{
@@ -1083,7 +1139,15 @@ from './renderers.js';
     }
   };
   setInterval(()=>{
-    const percent=Math.min(1,Math.max(0,audioState[1]*5))*100,word=percent<5?'Silêncio':percent<20?'Sussurro':percent<40?'Fala baixa':percent<60?'Fala':percent<80?'Voz alta':'Grito';
+    let percent,word;
+    if(analyser){
+      percent=Math.min(1,Math.max(0,audioState[1]*5))*100;
+      word=percent<5?'Silêncio':percent<20?'Sussurro':percent<40?'Fala baixa':percent<60?'Fala':percent<80?'Voz alta':'Grito'
+    }
+    else{
+      percent=Math.min(1,envelope*1.4)*100;
+      word='Respirando'
+    }
     $('#soundWord').textContent=word;
     $('#soundRule').style.setProperty('--level',percent+'%');
     $('#soundWord').classList.toggle('low',percent<5);
@@ -1092,19 +1156,61 @@ from './renderers.js';
   updateCameraState('loading');
   updateMicState('off');
   refreshCameraChoices();
+  video.addEventListener('loadeddata',maybeStartLoop);
+  function armCameraGesture(message){
+    if(cameraGestureArmed)return;
+    cameraGestureArmed=true;
+    updateCameraState('off',message||'Toque na tela para abrir o olho.');
+    maybeStartLoop();
+    const once=()=>{
+      window.removeEventListener('pointerdown',once,true);
+      window.removeEventListener('keydown',once,true);
+      cameraGestureArmed=false;
+      if(!started&&!cameraBusy&&cameraState!=='denied')startCamera(cameraFacingMode)
+    };
+    window.addEventListener('pointerdown',once,true);
+    window.addEventListener('keydown',once,true)
+  }
   if(isSecureContext&&navigator.mediaDevices?.getUserMedia){
-    startCamera('environment')
+    let cameraPolicySettled=false;
+    const settleToGesture=()=>{
+      if(cameraPolicySettled)return;
+      cameraPolicySettled=true;
+      armCameraGesture()
+    };
+    if(navigator.permissions?.query){
+      const watchdog=setTimeout(settleToGesture,1200);
+      navigator.permissions.query({
+        name:'camera'
+      }).then(permission=>{
+        clearTimeout(watchdog);
+        if(permission.state==='granted'){
+          cameraPolicySettled=true;
+          startCamera('environment');
+          return
+        }
+        if(cameraPolicySettled)return;
+        cameraPolicySettled=true;
+        if(permission.state==='denied'){
+          updateCameraState('denied','O acesso à câmera está bloqueado neste navegador.');
+          maybeStartLoop()
+        }
+        else armCameraGesture()
+      }).catch(()=>{
+        clearTimeout(watchdog);
+        settleToGesture()
+      })
+    }
+    else armCameraGesture()
   }
   else{
     setTimeout(()=>updateCameraState('off','Para abrir o olho, use o endereço seguro do Vercel ou localhost.'),2600);
-    notify('Para abrir o olho, use o endereço seguro do Vercel ou localhost.')
+    notify('Para abrir o olho, use o endereço seguro do Vercel ou localhost.');
+    maybeStartLoop()
   }
   document.addEventListener('visibilitychange',()=>{
     if(document.visibilityState==='hidden'){
-      if(raf){
-        cancelAnimationFrame(raf);
-        raf=0
-      }
+      maybeStopLoop();
       if(audioCtx?.state==='running')audioCtx.suspend().catch(()=>{});
       video.pause?.();
       clearTimeout(hiddenStopTimer);
@@ -1121,10 +1227,7 @@ from './renderers.js';
     }
     clearTimeout(hiddenStopTimer);
     if(audioCtx?.state==='suspended')audioCtx.resume().catch(()=>notify('A escuta precisa ser ligada de novo.'));
-    if(!raf){
-      last=0;
-      raf=requestAnimationFrame(draw)
-    }
+    maybeStartLoop();
     if(!started||!stream||stream.getVideoTracks().some(t=>t.readyState!=='live')){
       if(cameraState!=='denied'&&!cameraBusy)scheduleCameraRecovery({
         name:'NotReadableError'
@@ -1166,3 +1269,6 @@ from './renderers.js';
     })).catch(()=>{})
   }
 })();
+
+window.__psycoBoot={ok:true};
+document.getElementById("bootGuard")?.setAttribute("hidden","");

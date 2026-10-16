@@ -10,6 +10,7 @@ export function createMotionState(width,height) {
     previous:new Float32Array(width*height),
     motion:new Float32Array(width*height),
     edge:new Float32Array(width*height),
+    structure:new Float32Array(width*height),
     hasPrevious:false,
     activity:0,
     edgeRatio:1,
@@ -20,6 +21,7 @@ export function resetMotionState(state) {
   state.previous.fill(0);
   state.motion.fill(0);
   state.edge.fill(0);
+  state.structure.fill(0);
   state.hasPrevious=false;
   state.activity=0;
   state.edgeRatio=1;
@@ -32,6 +34,7 @@ export function analyzeMotionFrame(source,state,edgeControl=.58,collectBounds=tr
   previous=state.previous,
   motion=state.motion,
   edge=state.edge,
+  structure=state.structure,
   count=width*height;
   let activitySum=0,
   activePixels=0,
@@ -42,7 +45,7 @@ export function analyzeMotionFrame(source,state,edgeControl=.58,collectBounds=tr
   maxY=-1;
   for(let i=0,offset=0;i<count;i++,offset+=4)luma[i]=source[offset]*.299+source[offset+1]*.587+source[offset+2]*.114;
   const motionThreshold=16+(1-edgeControl)*28,
-  edgeThreshold=26-edgeControl*22,
+  edgeThreshold=24-edgeControl*20,
   inverseSpan=1/(88-motionThreshold),
   leftLimit=width*.06,
   rightLimit=width*.94,
@@ -56,8 +59,16 @@ export function analyzeMotionFrame(source,state,edgeControl=.58,collectBounds=tr
       activity=clamp((difference-motionThreshold)*inverseSpan,0,1),
       smoothed=activity>motion[i]?activity:motion[i]*.86;
       motion[i]=smoothed;
-      const gradient=(x+1<width?Math.abs(luma[i]-luma[i+1]):0)+(y+1<height?Math.abs(luma[i]-luma[i+width]):0);
-      edge[i]=clamp((gradient-edgeThreshold)*.24,0,1);
+      const left=x>0?luma[i-1]:luma[i],
+      right=x+1<width?luma[i+1]:luma[i],
+      up=y>0?luma[i-width]:luma[i],
+      down=y+1<height?luma[i+width]:luma[i],
+      gradient=(Math.abs(right-left)+Math.abs(down-up))*.5,
+      edgeValue=clamp((gradient-edgeThreshold)*.3,0,1);
+      edge[i]=edgeValue;
+      const combined=smoothed>edgeValue?smoothed:edgeValue,
+      previousStructure=structure[i];
+      structure[i]=previousStructure+(combined-previousStructure)*(combined>previousStructure?.25:.15);
       activitySum+=activity;
       if(collectBounds&&smoothed>=.08){
         activePixels++;

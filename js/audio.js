@@ -40,3 +40,12 @@ export function measureAudioBands(timeData,frequencyData,sampleRate,bands=new Fl
     nyquist
   }
 }
+export function updateEnvelope(current,target,rise=.5,fall=.12) {
+  const rate=target>current?rise:fall;
+  return current+(target-current)*rate
+}
+export function syntheticEnvelope(t) {
+  const slow=.5+.5*Math.sin(t*.00055),
+  drift=.5+.5*Math.sin(t*.00021+1.7);
+  return .05+.09*slow+.05*drift
+}
