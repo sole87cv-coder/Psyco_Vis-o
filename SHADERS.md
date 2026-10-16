@@ -1,77 +1,78 @@
-# Ecos e composição Canvas 2D (o motor de sonar)
+# O som revela a imagem — os 4 modos de sonho
 
-O Psyco_Visão desenha como um morcego escuta: um **emissor virtual** na base da tela (centro, 97% da altura) dispara **pulsos** radiais que se expandem pelo campo e voltam como **ecos**. Tudo é Canvas 2D — não há GLSL nem WebGL — e a câmera/microfone continuam 100% locais.
+No Psyco_Visão, o desenho **não existe no silêncio**. A câmera olha, o microfone escuta, e é o som que "acende" a imagem: o envelope sonoro multiplica a máscara de bordas/movimento, e o que apareceu vira **fósforo** — um rastro que se dissolve devagar (decaimento de 0,85 a 0,98 por quadro, conforme o modo). Sem som, a tela fica preta com uma **respiração** mínima (menos de 3% de brilho) para nunca parecer morta.
+
+Tudo é Canvas 2D puro (nada de WebGL) e câmera/microfone 100% locais.
 
 ## Vocabulário
 
 | termo | o que é |
 |---|---|
-| **pulso** | anel luminoso emitido pelo emissor; nasce denso e rápido e vai perdendo energia ao expandir |
-| **eco** | anel secundário criado quando um pulso toca uma borda de movimento do vídeo; é mais fraco e mais lento que o pulso que o gerou |
-| **decaimento** (fósforo) | o rastro que cada anel deixa ao se dissolver; quanto maior, mais tempo a lembrança dura na tela |
-| **banda** | faixa de frequência do som que modula a forma de um pulso: graves (60–250 Hz), médios, agudos (2–8 kHz) e o próprio eco |
-| **campo** | buffer onde o sonar desenha; fica em resolução menor que a tela (aspecto limitado a 0,4–2,6) |
-| **ponto cego** | área ao redor do emissor que fica sempre escura — o morcego não "vê" o próprio grito |
-| **pipoca** | ponto curto âmbar que representa os agudos (2–8 kHz); vive de 0,22 a 0,5 s |
+| **envelope** | volume geral do som (RMS suavizado em JS); é ele que multiplica toda revelação |
+| **máscara** | mapa do que a câmera viu de "estrutura" (bordas + movimento), a 160×120; é ela que o som revela |
+| **campo** | buffer onde o sonho desenha; fica em resolução menor que a tela (teto de pixels em `FIELD_PIXELS`) |
+| **fósforo / decaimento** | rastro que cada forma deixa ao se dissolver; por modo vai de 0,80 (Só contorno) a 0,98 (Eco de luz) |
+| **núcleo** | o traço fino (1–2 px) de cada forma; vem acompanhado de um **halo** progressivamente borrado |
+| **ponto cego** | área ao redor do emissor que fica sempre escura no modo Eco de luz |
+| **vaga-lumes** | pontos curtos de luz que marcam os agudos (2–8 kHz) no Eco de luz |
+| **respiração** | brilho de repouso no silêncio (<3%); ritmo e profundidade vêm do preset |
 
-## O ciclo de cada quadro
+## O ciclo de cada quadro (`js/app.js` → `js/renderers.js`)
 
-1. **Análise** (`js/motion.js`): a câmera é reduzida a 160×120; diferença temporal e gradiente geram os mapas `motion` e `edge`.
-2. **Pulsos avançam** (`js/renderers.js`, `step`): raio cresce com velocidade proporcional ao envelope RMS; o diâmetro que deforma as bordas segue a energia do áudio.
-3. **Energia** (`renderEnergy`): cada anel é desenhado por cordas horizontais; o raio local encurta onde há borda de movimento (`edgeDeform`), criando franjas e gagueira.
-4. **Reflexão**: quando um pulso cruza uma borda detectada, nasce um **eco** (`spawnRing` com banda `echo`).
-5. **Vídeo sob o sonar** (`buildMask` + `renderUnderlay`): a máscara do movimento tinge a imagem de verde; o vídeo é multiplicado por esse verde e recortado pela máscara.
-6. **Acumulação** (`accumulate`): dois buffers alternam (ping-pong); o quadro novo entra com o **decaimento** do preset (0,905–0,962 por quadro, em `PRESET_PROFILES`).
-7. **Composição** (`compose`): vídeo ao fundo na presença escolhida, sonar somado em modo `lighter` com respiração, e o ponto cego recortado por gradiente radial.
+1. **Análise** (`js/motion.js`): a câmera vira 160×120; diferença temporal (`motion`) e gradiente (`edge`) alimentam um campo único `structure` com suavização exponencial (α 0,15–0,25).
+2. **Escuta** (`js/audio.js`): `fftSize 512`, 8 bandas; o envelope RMS é suavizado em JS (subida rápida, descida pelo controle "Suavidade"). Sem microfone, um **envelope sintético** lento assume.
+3. **Máscara** (`buildReveal`): o campo é comparado com um limiar por nível de vídeo; o resultado vira uma imagem RGBA na cor `palette.fill` do modo.
+4. **Forma do modo** (ver tabela abaixo): cada modo desenha sua assinatura no campo (`renderEchoEnergy`, `renderSilhouette` + `renderContourThin`, `renderInfrared`).
+5. **Acumulação** (`accumulate`): dois buffers alternam (ping-pong); o quadro novo entra multiplicado pelo **decaimento** do modo+preset.
+6. **Composição** (`compose`): respiração ao fundo, vídeo tratado (por nível) por baixo, fósforo somado, ponto cego recortado.
 
-## Como o som vira forma (`js/audio.js`)
+**Filtro de coerência:** nada é desenhado onde não há borda, movimento ou som — o silêncio nunca vira granulado de tela cheia.
 
-- `fftSize = 512`, suavização feita em JS (não no `AnalyserNode`).
-- 8 bandas por `BAND_EDGES` (60 → 14 000 Hz), agrupadas em graves, médios e agudos.
-- **graves** → anéis largos, lentos e verdes (banda `bass`);
-- **médios** → anéis médios e contidos (banda `mid`);
-- **agudos** → pontos âmbar curtos, a "pipoca" (banda `treble`);
-- silêncio não fica vazio: o emissor solta uma respiração lenta em graves (`breathRate`/`breathDepth` do preset).
-- `sens` escala o quanto o sonho escuta; `gate` define o volume mínimo para acordar.
+## Os 4 modos (`MODE_PROFILES` em `js/config.js`)
 
-## Modos de imagem (`MODE_PROFILES` em `js/config.js`)
-
-| Modo | Identidade | Ajustes do sonar (ringGain / ringWidth / edgeDeform / edgeGain / dotGain / reflectionGain / videoGain) |
-|---|---|---|
-| **Silhueta** | Anéis cheios e vídeo presente | 1 / 1.25 / 1 / 1.15 / 0.55 / 0.75 / 1 |
-| **Contorno** | Anéis finos, bordas gritantes | 0.92 / 0.6 / 1.5 / 1.5 / 0.75 / 0.9 / 0.8 |
-| **Ambos** | Equilíbrio (padrão) | 1 / 1 / 1.2 / 1.3 / 0.7 / 0.85 / 1 |
-| **Só ecos de luz** | Sem imagem: só o sonar | 1.12 / 1.3 / 0.55 / 0.75 / 0.5 / 0.35 / 0 |
-
-## Presets (`PRESET_PROFILES`)
-
-Os 4 botões mudam a personalidade do sonar de uma vez (valores de sliders em `js/presets.js`):
-
-| Preset | decaimento | velocidade | âmbar | respiração (ritmo/profundidade) | pipoca |
+| Modo | Assinatura visual | Decaimento | Paleta | Ponto cego | Ajustes que ligam |
 |---|---|---|---|---|---|
-| **Atento** (`bat`) | 0,905 | 1,3 | 0,16 | 1,0 / 0,4 | 1 |
-| **Profundo** (`deep`) | 0,948 | 0,9 | 0,06 | 0,7 / 0,6 | 0,7 |
-| **Brilhante** (`delirium`) | 0,928 | 1,5 | 0,42 | 1,25 / 0,35 | 1,35 |
-| **Calmo** (`breath`) | 0,962 | 0,72 | 0,03 | 0,55 / 0,75 | 0,55 |
+| **Eco de luz** (padrão) | Emissor na base dispara pulsos radiais (velocidade ∝ RMS); as bordas do vídeo deformam os anéis e geram ecos persistentes; vaga-lumes nos agudos | 0,94–0,98 | âmbar + branco quente | sim | `echo`, `reflectionGain .85`, `edgeDeform 1`, `dotGain 1` |
+| **Silhueta** | Sem anéis: o som "corta" a silhueta em movimento, verde chapado, sem contorno; silêncio = preto total | 0,85–0,92 | verde escuro chapado | não | `fillAlpha .85`, `ringGain 0` |
+| **Silhueta e contorno** | A mesma silhueta, translúcida (α .55), com contorno fino âmbar e fumaça subindo (traçadores de ruído coerente deslocados pelos agudos) | 0,90–0,96 | verde + âmbar + creme | não | `fillAlpha .55`, `contourAlpha .9`, `smoke 1` |
+| **Só contorno** | Sem preenchimento: bordas a la Sobel com limiar adaptativo por bloco 8×8; cor vai de vermelho → âmbar → branco quente conforme a intensidade local; tremulação fina nos agudos | 0,80–0,88 | vermelho→âmbar→branco quente | não | `contourAlpha 1`, `jitter 2.4`, `ramp` |
 
-## Vídeo sob o sonar (`VIDEO_LEVELS`)
+Cada modo tem também `bandBass/bandMid/bandTreble` (peso das frequências) e `videoTint` (cor do vídeo tratado).
 
-`oculto` 0 · `sutil` 0,12 · `visivel` 0,35. A presença final ainda é modulada por `vivid` e limitada a 0,6 — **nunca há rosto legível**: a imagem entra como massa verde sob a máscara de movimento (toque duplo na tela alterna os níveis).
+## Níveis de vídeo (`VIDEO_LEVELS` + `videoGain*`)
 
-## Paleta
+| Nível | O que aparece da câmera | Ganho |
+|---|---|---|
+| **OCULTO** (0%) | nada — só o fósforo do som | — |
+| **SUTIL** (~12%, padrão) | apenas as **bordas** (máscara só de `edge`), quase invisível | `videoGainSutil .33` |
+| **VISÍVEL** (~35%) | vídeo tratado na região do movimento/estrutura | `videoGainVisivel 1` |
 
-Verde-fósforo (168, 224, 184) e âmbar (216, 168, 80), nada mais. O âmbar cresce nas bandas agudas e no `amberMix` do preset.
+O vídeo entra sempre **dessaturado** (escala de cinza) e multiplicado pela cor `videoTint` — nunca há rosto legível nem cor fiel. A presença final é multiplicada pelo envelope: sem som, o vídeo também apaga.
 
-## Desempenho
+## Frequências → formas (`js/audio.js`)
 
-- Análise fixa em 160×120; campo do sonar com teto de pixels (128 000 celular / 320 000 computador, lado maior ≤ 720/1200).
-- Render em `min(dpr, 1.5)` no celular e `min(dpr, 2.0)` no computador; escala adaptativa 0,85× se quadros passarem de 16 ms e volta a 1× quando estabilizar (limites em `PERF`).
-- Ping-pong de 2 canvas, sem `ImageData` novo por quadro; laços tipados, sem closures nem `Math.pow` no laço de pixels.
-- Aba escondida: RAF parado, áudio suspenso, câmera desligada; tudo retoma ao voltar.
-- `prefers-reduced-motion`: sem deriva, pulsos mais lentos/fracos, menos reflexos e respiração curta (fatores em `js/shaders.js`).
+- `fftSize = 512`, 8 bandas por `BAND_EDGES` (60 → 14 000 Hz), com suavização extra em JS.
+- **graves (60–250 Hz)** → manchas largas e difusas (halo do baixo, pincel grosso);
+- **médios (250–2 kHz)** → o corpo da silhueta e a força dos anéis;
+- **agudos (2–8 kHz)** → bordas acesas, vaga-lumes e a tremulação fina do contorno.
+- Sem microfone (negado/ausente): envelope sintético lento + aviso discreto na interface; o sonho continua respirando.
+
+## Definição × atmosfera
+
+- Cada forma tem **núcleo definido** (traço de 1–2 px) + **halo progressivamente borrado** (desenhado em resolução menor e ampliado com suavização).
+- Movimento lê como vivo: a deformação por borda (`edgeDeform`), os ecos e a fumaça dão deriva constante; posições passam por suavização exponencial (α 0,15–0,25).
+- Paletas restritas: 2–3 cores por modo.
+
+## Desempenho (`PERF` em `js/config.js`)
+
+- Análise fixa em 160×120; campo do sonho com teto de pixels (128 000 celular / 320 000 computador).
+- Render em `min(dpr, 1.5)` no celular e `min(dpr, 2.0)` no computador.
+- Orçamento medido em **tempo de trabalho** (não intervalo de vsync): acima de 16 ms por 1 s → escala ×0,85; abaixo de 10 ms por 3 s → volta a crescer. O relatório do diagnóstico mostra "Quadro médio".
+- Ping-pong de 2 canvas; **zero `ImageData` novo por quadro** (buffers fixos, laços em arrays tipados, sem closures no laço de pixels).
+- Aba escondida: RAF parado + áudio suspenso; retoma ao voltar.
+- `prefers-reduced-motion`: sem fumaça, sem tremulação, decaimento curto — a revelação por som permanece.
+- Fallbacks: sem `OffscreenCanvas` usa canvas normal; sem `AudioContext`, envelope sintético; sem câmera, o modo Eco de luz pulsa só com o som.
 
 ## Como evoluir
 
-Leitura de pixels em `js/motion.js`; medição sonora em `js/audio.js`; desenho do sonar e composição em `js/renderers.js`; personalidade em `js/config.js` (modos/presets) e `js/shaders.js`; interação em `js/ui.js`/`js/app.js`.
-
-Comece pelos números "de fora": `RING_FADE` (quanto cada pulso desvanece), a amplitude em `renderEnergy` (hoje `.6·√fade`) e o piso de borda (`0.68 + edge·…`). Evite `getImageData` extra por quadro, reutilize buffers e mantenha a captura local. Documente identidade, entrada, controles e custo esperado aqui.
+Números "de fora" para brincar: o **decaimento** de cada modo (`decayMin/decayMax/decayBase`), a **paleta** (`palette.fill/core/warm/veil/flash/ramp`), o **limiar** de revelação em `buildReveal` (`sutil .34` / demais `.14`), a **fumaça** (`spawnSmoke`/`updateAndDrawSmoke`) e a **tremulação** (`jitter`). Meça sempre o "Quadro médio" no diagnóstico antes e depois. Evite `getImageData` extra por quadro, reutilize buffers e mantenha a captura local. Documente identidade, entrada, controles e custo esperado aqui.

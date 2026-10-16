@@ -38,9 +38,10 @@ js/                 O "motor" do site, em 10 arquivos:
   js/camera.js      Acesso à câmera e mensagens de erro.
   js/audio.js       Leitura do som do microfone.
   js/motion.js      Detecção de movimento na imagem.
-  js/shaders.js     Personalidade visual do sonar em cada modo/preset.
-  js/renderers.js   O motor de sonar: pulsos, ecos, decaimento e
-                    composição no Canvas.
+  js/shaders.js     Personalidade visual de cada modo/preset (pesos
+                    das bandas, decaimento, respiração).
+  js/renderers.js   O motor visual: revelação por som, os 4 modos
+                    (anéis, silhueta, contorno, fumaça) e composição.
   js/ui.js          Textos de estado e rótulos da interface.
   js/utils.js       Funções auxiliares pequenas.
 scripts/            Ferramentas (não fazem parte do site):
@@ -152,19 +153,31 @@ endereço → "Dados do site" → limpar) e recarregue.
 
 4.4) AJUSTAR OS MODOS DE IMAGEM
 -------------------------------
-Modos: Silhueta, Contorno, Silhueta e contorno, Só ecos de luz.
+Modos (no seletor "Modo de imagem"): Eco de luz (padrão),
+Silhueta, Silhueta e contorno, Só contorno.
 Os números de cada modo ficam em js/config.js, em MODE_PROFILES.
-Cada modo tem sete ajustes do sonar (0 = desliga, 1 = neutro):
-  ringGain        força dos anéis (pulsos)
-  ringWidth       espessura dos anéis
-  edgeDeform      gagueira dos anéis nas bordas de movimento
-  edgeGain        quanto as bordas do vídeo acendem os ecos
-  dotGain         força da "pipoca" (pontos dos agudos)
-  reflectionGain  chance de um pulso gerar eco ao tocar borda
-  videoGain       presença do vídeo (0 = sem imagem)
+Cada modo tem:
+  decayMin/decayMax/decayBase  decaimento do fósforo (o rastro);
+                    o controle "Rastro de luz" (trail) desloca
+                    dentro desses limites
+  palette         cores do modo (fill, core, warm, veil, flash;
+                    em "Só contorno" também ramp)
+  videoTint       cor do vídeo tratado (níveis Sutil/Visível)
+  videoGainSutil / videoGainVisivel  força do vídeo por nível
+  bandBass/bandMid/bandTreble  peso de graves/médios/agudos
+  fillAlpha       opacidade da silhueta chapada (0 = sem)
+  contourAlpha    força do contorno fino (0 = sem)
+  smoke           fumaça que sobe (0 = sem)
+  jitter          tremulação do contorno nos agudos
+  ringGain/ringWidth/edgeDeform/edgeGain/dotGain/reflectionGain
+                  anéis: força, espessura, gagueira nas bordas,
+                  brilho das bordas, vaga-lumes, chance de eco
+  echo / blindSpot  ecos persistentes / ponto cego do emissor
+  emitter         posição do emissor (fração da tela)
 
-Dica segura: mexa primeiro em ringGain e dotGain (0 = desliga,
-1 = cheio) e salve. O catálogo SHADERS.md explica cada um.
+Dica segura: para "desligar" um efeito, zere o campo (ex.:
+smoke:0); para "cheio", use 1. Salve e recarregue. O catálogo
+SHADERS.md traz a tabela comparativa dos 4 modos.
 
 4.5) AJUSTAR OS 4 BOTÕES DE PRESET
 -----------------------------------
@@ -173,15 +186,14 @@ de uma vez. Dois lugares:
 - js/presets.js -> PRESET_CONTROL_VALUES: qual valor cada preset
   dá para cada controle (mode, sens, gate, green, edge, wave,
   fish, glitch, vivid, trail).
-- js/config.js -> PRESET_PROFILES: a personalidade do sonar de
-  cada preset:
-    decay       decaimento do fósforo, 0.9 a 0.965 (maior = o
-                rastro dura mais)
-    speed       velocidade dos pulsos
-    amberMix    quanto de âmbar entra no verde (0 a 1)
+- js/config.js -> PRESET_PROFILES: a personalidade de cada preset:
+    decayShift  desloca o decaimento do modo atual (-.016 a .024;
+                maior = rastro mais longo)
+    speed       velocidade das ondas/deriva
     breathRate  ritmo da respiração no silêncio
     breathDepth profundidade da respiração (e do ponto cego)
-    dotGain     força da "pipoca" dos agudos
+    dotGain     força dos vaga-lumes (agudos)
+    warmMix     quanto de branco quente entra no âmbar (0 a 1)
 
 Mantenha os números dentro dos limites (min/max) dos sliders no
 index.html — a seção 4.3 lista os controles.
@@ -189,9 +201,13 @@ index.html — a seção 4.3 lista os controles.
 4.6) MUDAR OS NÍVEIS DE VÍDEO (OCULTO / SUTIL / VISÍVEL)
 --------------------------------------------------------
 js/config.js -> VIDEO_LEVELS. Hoje: oculto 0, sutil 0.12,
-visível 0.35 (0 = nada da câmera, 1 = imagem cheia). A presença
-final ainda é limitada a 0.6 na composição — a intenção é que
-nunca haja rosto legível, só uma massa verde sob o movimento.
+visível 0.35 (a intenção de cada nível). Além disso, cada modo em
+MODE_PROFILES tem videoGainSutil/videoGainVisivel — o quanto o
+vídeo aparece de fato em cada nível (hoje .33 no sutil e 1 no
+visível; sutil revela só as bordas, visível revela a área toda de
+movimento). O vídeo entra sempre em escala de cinza multiplicada
+por videoTint: nunca há rosto legível. A presença ainda é
+multiplicada pelo som — sem som, o vídeo apaga.
 
 4.7) MUDAR O QUE ABRE LIGADO (PADRÃO)
 -------------------------------------
@@ -234,28 +250,39 @@ menu radial (Escutar/Modo/Ajustes/Tela cheia); tecla H mostra a
 interface no computador. Mexer no motion do celular também
 acorda a interface (quando o aparelho permitir).
 
-4.11) NÚMEROS DO SONAR (PULSOS, CAMPO, DESEMPENHO)
---------------------------------------------------
-- js/config.js -> FIELD_PIXELS: teto de pixels do campo do sonar
+4.11) NÚMEROS DO CAMPO E DESEMPENHO
+-----------------------------------
+- js/config.js -> FIELD_PIXELS: teto de pixels do campo do sonho
   (128 000 no celular, 320 000 no computador).
 - js/config.js -> DPR_CAP: nitidez de render (1.5 celular,
   2.0 computador).
-- js/config.js -> PERF: quando o quadro passa de 16 ms por 1 s,
-  o render encolhe para 85% e volta sozinho quando estabiliza.
-- js/renderers.js -> RING_FADE (hoje 0.95): quanto um pulso
-  desvanece por quadro; perto de 1 = rastro longo. A amplitude
-  do anel na tela é .6 * raiz(fade) — mexer nesses dois números
-  muda o brilho geral.
+- js/config.js -> PERF: o quadro é medido pelo TEMPO DE TRABALHO
+  (não pelo intervalo entre quadros). Passou de 16 ms por 1 s?
+  O render encolhe para 85%; ficou abaixo de 10 ms por 3 s?
+  Volta a crescer sozinho (limites 0.55 a 1).
+- Para conferir: painel Ajustes -> SISTEMA -> Diagnóstico mostra
+  "Quadro médio: X ms de trabalho". No celular, o alvo é ficar
+  abaixo de 12 ms.
+- js/renderers.js -> RING_FADE e a velocidade em `step` mudam
+  quanto cada anel desvanece e quão rápido expande.
 
-4.12) O SOM QUE VIRA FORMA
---------------------------
+4.12) O SOM QUE REVELA A IMAGEM
+-------------------------------
+- Regra central: o envelope do som multiplica a máscara de
+  bordas/movimento. Sem som, a tela fica quase preta (só a
+  respiração, abaixo de 3% de brilho).
 - As 8 bandas de frequência estão em js/config.js -> BAND_EDGES
-  (60 Hz a 14 000 Hz). Graves viram anéis largos, médios anéis
-  contidos, agudos a "pipoca" âmbar.
-- O tamanho da análise (fftSize, hoje 512) fica em js/app.js,
-  onde o microfone é ligado. Maior = mais detalhe, mais custo.
-- A suavização do som é feita em JavaScript (js/app.js), não no
-  AnalyserNode do navegador — se o som parecer "duro", mexa ali.
+  (60 Hz a 14 000 Hz): graves fazem manchas largas, médios o
+  corpo da silhueta, agudos as bordas/faíscas/vaga-lumes.
+- O tamanho da análise (fftSize, hoje 512) e a suavização
+  (smoothingTimeConstant 0.7 + média extra em JS) ficam em
+  js/app.js, onde o microfone é ligado.
+- Sem microfone (negado ou ausente): js/audio.js ->
+  syntheticEnvelope assume um envelope lento e a interface avisa
+  discretamente — o sonho continua respirando.
+- Piso de ruído: as primeiras leituras do microfone calibram o
+  silêncio da sala (limitado a 5%) para o sonho não disparar com
+  chiado de fundo.
 
 ----------------------------------------------------------------
  5. GUARDAR VERSÕES (GIT) E PUBLICAR (VERCEL)
@@ -295,25 +322,36 @@ anterior:
       para sempre, algo quebrou — desfaça a última mudança)
   [ ] Com a permissão dada, o topo mostra olho/microfone ativos
       (não "em erro")
+  [ ] O SOM REVELA: no silêncio fica quase preto (só a
+      respiração); falar, estalar os dedos ou assobiar acende o
+      desenho na hora
+  [ ] Os 4 modos são visualmente diferentes entre si (Eco de
+      luz, Silhueta, Silhueta e contorno, Só contorno)
+  [ ] Os 3 níveis de vídeo são claramente diferentes (toque
+      duplo alterna; OCULTO = nada de câmera)
   [ ] Depois de ~2,5 s parado, a interface some e ficam só o
       desenho e a marca d'água; um toque a traz de volta
   [ ] O botão AJUSTES abre o painel; sliders e abas respondem
   [ ] O botão ESCUTAR pede o microfone
   [ ] Cada preset muda a imagem de forma visível
+  [ ] Diagnóstico (SISTEMA): "Quadro médio" abaixo de 12 ms no
+      celular; a "Escala de render" adaptativa fica perto de 1
   [ ] Janela estreita (formato celular) e janela larga ficam
       bem: nada cortado, nada sobreposto
   [ ] Quando possível, teste no celular pelo site publicado
 
 E os testes de canto, que valem antes de publicar:
   [ ] Retrato e paisagem: girar a tela não corta o painel nem a
-      pílula; o sonar se reajusta
+      pílula; o sonho se reajusta
   [ ] Câmera negada: o texto aparece no topo, sem quebrar; tocar
       no ícone do olho tenta de novo
   [ ] Microfone negado: idem no ícone do ouvido; o site continua
-      respirando sem som
+      respirando com envelope sintético e revela pelo movimento
+  [ ] Câmera/microfone ausentes (computador sem webcam): o Eco
+      de luz pulsa só com o som, sem erro no console
   [ ] prefers-reduced-motion ligado (nas opções do sistema ou do
-      navegador): sem deriva, pulsos lentos, interface apenas
-      desvanece (sem animação)
+      navegador): sem fumaça, sem tremulação; a revelação por
+      som continua
   [ ] Aba em segundo plano: voltar mostra a câmera de novo; se
       ficou muito tempo escondida, tocar no olho reabre
 
@@ -342,6 +380,12 @@ E os testes de canto, que valem antes de publicar:
 - Tela preta permanente logo após uma edição: provavelmente um
   arquivo quebrou (vírgula, aspas ou etiqueta faltando). Desfaça:
   git restore .   (ou Ctrl+Z no editor) e recarregue.
+
+- Abriu o index.html direto do disco (endereço começando com
+  "file://") e aparece um cartão explicando que os módulos não
+  carregam: isso é esperado. Navegadores bloqueiam módulos e
+  câmera em file://. Use o Testar-Psyco_Visão.bat (localhost) ou
+  o site publicado (https) — o cartão do próprio site explica.
 
 ----------------------------------------------------------------
  8. REGRAS DE OURO (NÃO QUEBRAR A ARQUITETURA)
