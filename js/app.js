@@ -1,13 +1,19 @@
 import {
   VIDEO_LEVELS,
   CONTROL_IDS,
-  MOTION_QUALITY,
+  ANALYSIS_WIDTH,
+  ANALYSIS_HEIGHT,
+  FIELD_PIXELS,
+  DPR_CAP,
+  HUD,
+  PERF,
   DEFAULT_VIDEO_LEVEL,
   DEFAULT_PRESET
 }
 from './config.js';
 import {
   clamp,
+  coverRect,
   readStorageJSON,
   writeStorageJSON
 }
@@ -26,7 +32,8 @@ import {
   restoreControlValues,
   bindControlInputs,
   renderVideoLevelState,
-  bindVideoLevelButtons
+  bindVideoLevelButtons,
+  createHud
 }
 from './ui.js';
 import {
@@ -36,7 +43,9 @@ import {
 }
 from './camera.js';
 import {
-  analyzeMotionFrame
+  createMotionState,
+  analyzeMotionFrame,
+  resetMotionState
 }
 from './motion.js';
 import {
@@ -44,7 +53,7 @@ import {
 }
 from './audio.js';
 import {
-  drawCanvasLayer
+  createSonarEngine
 }
 from './renderers.js';
 (()=>{
@@ -62,12 +71,8 @@ from './renderers.js';
   micStream=null,
   audioCtx=null,
   analyser=null,
-  data=null,
   raf=0,
   last=0,
-  energy=0,
-  pulses=[],
-  panelTimer,
   started=false,
   cameraBusy=false,
   cameraSwitching=false,
@@ -78,8 +83,15 @@ from './renderers.js';
   cameraState='off',
   cameraStateDetail='',
   lastAudioLog=0,
-  trailCanvas=document.createElement('canvas'),
-  trailCtx=trailCanvas.getContext('2d');
+  hiddenStopTimer=0,
+  adaptiveScale=1,
+  measuredFrameMs=16,
+  frameWindowTime=0,
+  frameWindowFrames=0,
+  poorAccumMs=0,
+  goodAccumMs=0,
+  motionActivity=0,
+  firstDraw=true;
   const saved=readStorageJSON('psyco_visao_settings',readStorageJSON('wut-settings'));
   const videoLevels=VIDEO_LEVELS,
   savedVisual=readStorageJSON('psyco_visao_visual',readStorageJSON('weburutao_visual')),
@@ -89,137 +101,31 @@ from './renderers.js';
   videoPresenceFrom=videoPresence,
   videoPresenceTarget=videoPresence,
   videoPresenceStart=0;
-  let motionWidth=0,
-  motionHeight=0,
-  motionPixels,
-  previousLuma,
-  motionActivity=0,
-  motionSample=0,
-  motionReadStride=2,
-  lastMotionVideoTime=-1,
-  hasPreviousMotion=false,
-  motionTrack=null,
-  renderQuality=1,
-  renderTier=0,
-  perfFrames=0,
-  perfStart=0,
-  measuredFps=0,
-  poorPerfWindows=0,
-  goodPerfWindows=0,
-  firstDraw=true;
-  const motionReadCanvas=document.createElement('canvas'),
-  motionReadCtx=motionReadCanvas.getContext('2d',{
+  const motionReadCanvas=document.createElement('canvas');
+  motionReadCanvas.width=ANALYSIS_WIDTH;
+  motionReadCanvas.height=ANALYSIS_HEIGHT;
+  const motionReadCtx=motionReadCanvas.getContext('2d',{
     willReadFrequently:true
-  }),
-  motionMaskCanvas=document.createElement('canvas'),
-  motionMaskCtx=motionMaskCanvas.getContext('2d'),
-  edgeCanvas=document.createElement('canvas'),
-  edgeCtx=edgeCanvas.getContext('2d'),
-  smokeCanvas=document.createElement('canvas'),
-  smokeCtx=smokeCanvas.getContext('2d'),
-  meshCanvas=document.createElement('canvas'),
-  meshCtx=meshCanvas.getContext('2d'),
-  revealCanvas=document.createElement('canvas'),
-  revealCtx=revealCanvas.getContext('2d'),
-  revealMaskCanvas=document.createElement('canvas'),
-  revealMaskCtx=revealMaskCanvas.getContext('2d'),
-  motionQuality=MOTION_QUALITY;
-  function setMotionResolution(width,height){
-    const ratio=Math.min(1,innerWidth/width,innerHeight/height);
-    width=Math.round(width*ratio);
-    height=Math.round(height*ratio);
-    if(width===motionWidth&&height===motionHeight&&motionPixels)return;
-    motionWidth=width;
-    motionHeight=height;
-    motionReadCanvas.width=motionMaskCanvas.width=edgeCanvas.width=smokeCanvas.width=meshCanvas.width=width;
-    motionReadCanvas.height=motionMaskCanvas.height=edgeCanvas.height=smokeCanvas.height=meshCanvas.height=height;
-    [motionReadCtx,
-    motionMaskCtx,
-    edgeCtx,
-    smokeCtx,
-    meshCtx].forEach(c=>{
-      c.imageSmoothingEnabled=true;
-      c.imageSmoothingQuality='high'
-    });
-    motionPixels=motionMaskCtx.createImageData(width,height);
-    previousLuma=new Float32Array(width*height);
-    motionSample=0;
-    hasPreviousMotion=false;
-    smokeCtx.clearRect(0,0,width,height);
-    edgeCtx.clearRect(0,0,width,height)
-  }
-  setMotionResolution(480,270);
-  function updateRenderPerformance(t){
-    if(document.visibilityState==='hidden'){
-      perfFrames=0;
-      perfStart=0;
-      poorPerfWindows=goodPerfWindows=0;
-      return
-    }
-    perfFrames++;
-    if(!perfStart){
-      perfStart=t;
-      return
-    }
-    const elapsed=t-perfStart;
-    if(elapsed<1600)return;
-    measuredFps=perfFrames*1000/elapsed;
-    perfFrames=0;
-    perfStart=t;
-    if(measuredFps<25){
-      poorPerfWindows++;
-      goodPerfWindows=0;
-      if(poorPerfWindows<2)return;
-      poorPerfWindows=0;
-      if(renderQuality>.66){
-        renderQuality=Math.max(.66,renderQuality-.17);
-        resize();
-        return
-      }
-      if(motionReadStride<4){
-        motionReadStride++;
-        return
-      }
-      if(renderTier<motionQuality.length-1){
-        renderTier++;
-        const quality=motionQuality[renderTier];
-        setMotionResolution(quality.width,quality.height)
-      }
-    }
-    else if(measuredFps>32){
-      goodPerfWindows++;
-      poorPerfWindows=0;
-      if(goodPerfWindows>=4){
-        if(renderQuality<1){
-          renderQuality=Math.min(1,renderQuality+.17);
-          resize()
-        }
-        else if(motionReadStride>2)motionReadStride--;
-        else if(renderTier>0){
-          renderTier--;
-          const quality=motionQuality[renderTier];
-          setMotionResolution(quality.width,quality.height)
-        }
-        goodPerfWindows=0
-      }
-    }
-    else{
-      poorPerfWindows=goodPerfWindows=0
-    }
-  }
+  });
+  const analysisState=createMotionState(ANALYSIS_WIDTH,ANALYSIS_HEIGHT);
+  const sonar=createSonarEngine();
+  const hud=createHud({
+    idleMs:HUD.idleMs
+  });
   const audioState=new Float64Array(11),
-  timeData=new Float32Array(1024),
-  freqData=new Float32Array(512);
-  let soundRevealSmooth=0,
-  micStartedAt=0,
+  bandValues=new Float32Array(8),
+  bandsSmooth=new Float32Array(8),
+  bandsMax=new Float32Array(8).fill(1e-6),
+  timeData=new Float32Array(512),
+  freqData=new Float32Array(256);
+  let micStartedAt=0,
   noiseSum=0,
   noiseFrames=0,
   bassMax=1e-6,
   midMax=1e-6,
   trebleMax=1e-6,
   lastPulseAt=0,
-  lastSilenceAt=0,
-  originSide=0;
+  lastSilenceAt=0;
   const controls=CONTROL_IDS;
   restoreControlValues(controls,saved,$);
   const updateLabels=()=>updateControlLabels($);
@@ -236,7 +142,7 @@ from './renderers.js';
   }
   function setVideoPresence(level){
     if(!Object.prototype.hasOwnProperty.call(videoLevels,level))return;
-    if(level!==activeVideoLevel)resetMotionShader();
+    if(level!==activeVideoLevel)sonar.reset();
     videoPresenceFrom=videoPresence;
     videoPresenceTarget=videoLevels[level];
     videoPresenceStart=performance.now();
@@ -248,10 +154,21 @@ from './renderers.js';
   }
   bindVideoLevelButtons(document.querySelectorAll('[data-video-level]'),setVideoPresence);
   updateVideoLevelUI();
+  function desiredFieldSize(){
+    const aspect=clamp(w/Math.max(1,h),.4,2.6),
+    small=innerWidth<=720,
+    budget=small?FIELD_PIXELS.celular:FIELD_PIXELS.computador,
+    limit=small?720:1200;
+    const height=clamp(Math.round(Math.sqrt(budget/aspect)),160,limit),
+    width=clamp(Math.round(height*aspect),160,limit);
+    return{
+      width,height
+    }
+  }
   function resize(){
-    const memoryBudget=Number(navigator.deviceMemory)||8,
-    maxDpr=(innerWidth<=900||memoryBudget<=4)?1.25:1.6;
-    dpr=Math.min(devicePixelRatio||1,maxDpr)*renderQuality;
+    const small=innerWidth<=720,
+    cap=small?DPR_CAP.celular:DPR_CAP.computador;
+    dpr=Math.max(.75,Math.min(devicePixelRatio||1,cap)*adaptiveScale);
     w=innerWidth;
     h=innerHeight;
     canvas.width=Math.round(w*dpr);
@@ -261,543 +178,107 @@ from './renderers.js';
     ctx.setTransform(dpr,0,0,dpr,0,0);
     ctx.imageSmoothingEnabled=true;
     ctx.imageSmoothingQuality='high';
-    trailCanvas.width=Math.round(w*dpr);
-    trailCanvas.height=Math.round(h*dpr);
-    trailCtx.setTransform(dpr,0,0,dpr,0,0);
-    trailCtx.imageSmoothingEnabled=true;
-    trailCtx.imageSmoothingQuality='high';
-    revealCanvas.width=revealMaskCanvas.width=canvas.width;
-    revealCanvas.height=revealMaskCanvas.height=canvas.height;
-    revealCtx.setTransform(dpr,0,0,dpr,0,0);
-    revealMaskCtx.setTransform(dpr,0,0,dpr,0,0);
-    revealCtx.imageSmoothingEnabled=revealMaskCtx.imageSmoothingEnabled=true;
-    revealCtx.imageSmoothingQuality=revealMaskCtx.imageSmoothingQuality='high';
-    setMotionResolution(motionQuality[renderTier].width,motionQuality[renderTier].height)
+    const field=desiredFieldSize();
+    if(!sonar.width||Math.abs(field.height/sonar.height-1)>.06){
+      sonar.resize(field.width,field.height);
+      resetMotionState(analysisState);
+      lastSilenceAt=performance.now()
+    }
   }
   addEventListener('resize',resize);
   resize();
   const reducedMotionQuery=window.matchMedia?.('(prefers-reduced-motion: reduce)');
-  let activeDreamPreset=['bat',
-  'deep',
-  'delirium',
-  'breath'].includes(saved.preset)?saved.preset:DEFAULT_PRESET;
+  let activeDreamPreset=['bat','deep','delirium','breath'].includes(saved.preset)?saved.preset:DEFAULT_PRESET;
   document.querySelectorAll('#presets .preset').forEach(button=>{
     const active=button.dataset.preset===activeDreamPreset;
     button.classList.toggle('active',active);
     button.setAttribute('aria-pressed',String(active))
   });
-  // Heurística geométrica de seleção por movimento; não identifica pessoas nem segmenta a imagem.
-  const conservativeHumanMotionHeuristic={
-    box:null,
-    previousBox:null,
-    candidateSince:0,
-    activeUntil:0,
-    misses:0,
-    visible:false,
-    activePixels:0,
-    edgeRatio:1,
-    aspect:0,
-    score:0,
-    lastScore:0,
-    revealAmount:0,
-    lastEval:0
-  };
-  function buildMotionMask(current,previous,output){
-    const result=analyzeMotionFrame(current,previous,output,motionWidth,motionHeight,+$('#edge').value/100,activeVideoLevel==='oculto');
-    motionActivity=result.activity;
-    const h=conservativeHumanMotionHeuristic;
-    h.activePixels=result.activePixels;
-    h.edgeRatio=result.edgeRatio;
-    h.box=result.box;
-    h.aspect=result.aspect
-  }
-  function updateConservativeHumanMotionHeuristic(t,reduced){
-    const h=conservativeHumanMotionHeuristic,
-    b=h.box;
-    let score=0,
-    coherent=false;
-    if(b){
-      const area=h.activePixels/(motionWidth*motionHeight),
-      ratio=b.height/Math.max(1,b.width),
-      dx=Math.abs(b.cx/motionWidth-.5)*2,
-      dy=Math.abs(b.cy/motionHeight-.5)*2,
-      centerDistance=Math.sqrt(dx*dx+dy*dy)/Math.sqrt(2),
-      areaScore=clamp(area/.0012,0,1),
-      aspectScore=clamp(1-Math.abs(Math.log(Math.max(.1,ratio)/2.1))*.34,0,1),
-      centerScore=clamp(1-centerDistance*.72,0,1),
-      edgeScore=clamp(1-h.edgeRatio,0,1);
-      if(h.previousBox){
-        const p=h.previousBox,
-        ix=Math.max(0,Math.min(b.right,p.right)-Math.max(b.left,p.left)),
-        iy=Math.max(0,Math.min(b.bottom,p.bottom)-Math.max(b.top,p.top)),
-        intersection=ix*iy,
-        union=b.width*b.height+p.width*p.height-intersection,
-        iou=union?intersection/union:0,
-        cx=b.cx-p.cx,
-        cy=b.cy-p.cy,
-        distance=Math.sqrt(cx*cx+cy*cy),
-        limit=Math.hypot(motionWidth,motionHeight)*.20;
-        coherent=iou>=.06||distance<=limit
+  let activeShader=getDreamShader($('#mode').value,activeDreamPreset,0);
+  function updateFrameBudget(dt){
+    frameWindowTime+=dt;
+    frameWindowFrames++;
+    if(frameWindowTime<1)return;
+    measuredFrameMs=frameWindowTime*1000/frameWindowFrames;
+    frameWindowTime=0;
+    frameWindowFrames=0;
+    if(document.visibilityState==='hidden'){
+      poorAccumMs=0;
+      goodAccumMs=0;
+      return
+    }
+    if(measuredFrameMs>PERF.slowMs){
+      goodAccumMs=0;
+      poorAccumMs+=1000;
+      if(poorAccumMs>=PERF.slowWindowMs&&adaptiveScale>PERF.minScale){
+        adaptiveScale=Math.max(PERF.minScale,adaptiveScale*PERF.downscale);
+        poorAccumMs=0;
+        resize()
       }
-      const coherenceScore=h.previousBox?(coherent?1:.35):.55;
-      score=area>=.0012&&area<=.42&&b.width/motionWidth>=.022&&b.height/motionHeight>=.06&&h.edgeRatio<=.62?(.25*areaScore+.25*aspectScore+.20*centerScore+.15*edgeScore+.15*coherenceScore)*aspectScore:0;
-      h.score=score;
-      h.aspect=ratio;
-      const qualifies=score>=.30;
-      if(qualifies){
-        if(!coherent)h.candidateSince=t;
-        h.previousBox=b;
-        h.misses=0;
-        const confirmation=reduced?180:120;
-        if(t-h.candidateSince>=confirmation){
-          h.visible=true;
-          h.activeUntil=t+(reduced?600:420);
-          h.box=b;
-          h.lastScore=score
-        }
-      }
-      else{
-        h.previousBox=null;
-        h.candidateSince=0;
-        h.misses++
+    }
+    else if(measuredFrameMs<PERF.restoreMs){
+      poorAccumMs=0;
+      goodAccumMs+=1000;
+      if(goodAccumMs>=PERF.restoreWindowMs&&adaptiveScale<1){
+        adaptiveScale=Math.min(1,adaptiveScale*PERF.upscale);
+        goodAccumMs=0;
+        resize()
       }
     }
     else{
-      h.score=0;
-      h.previousBox=null;
-      h.candidateSince=0;
-      h.misses++
+      poorAccumMs=0;
+      goodAccumMs=0
     }
-    if(h.misses>=3&&t>=h.activeUntil)h.visible=false;
-    const target=h.visible?Math.max(h.lastScore,.45):0,
-    elapsed=h.lastEval?Math.max(0,t-h.lastEval):0,
-    rise=reduced?180:100,
-    fall=reduced?1100:750;
-    if(target>h.revealAmount)h.revealAmount=Math.min(target,h.revealAmount+elapsed/rise*target);
-    else h.revealAmount=Math.max(target,h.revealAmount-elapsed/fall);
-    if(h.revealAmount<.005)h.revealAmount=0;
-    h.lastEval=t
   }
-  function updateLiquidEdges(t,reduced){
-    edgeCtx.save();
-    edgeCtx.clearRect(0,0,motionWidth,motionHeight);
-    edgeCtx.filter='grayscale(1) contrast(1.08)';
-    edgeCtx.globalCompositeOperation='source-over';
-    edgeCtx.drawImage(motionReadCanvas,0,0);
-    edgeCtx.globalCompositeOperation='difference';
-    const drift=reduced?0:Math.sin(t*.00024)*.65;
-    edgeCtx.drawImage(motionReadCanvas,1+drift,0);
-    edgeCtx.drawImage(motionReadCanvas,-1+drift,0);
-    edgeCtx.drawImage(motionReadCanvas,drift,1);
-    edgeCtx.drawImage(motionReadCanvas,drift,-1);
-    edgeCtx.globalCompositeOperation='source-over';
-    edgeCtx.filter='none';
-    edgeCtx.restore();
-  }
-  function resetMotionShader(){
-    smokeCtx.clearRect(0,0,motionWidth,motionHeight);
-    motionMaskCtx.clearRect(0,0,motionWidth,motionHeight);
-    edgeCtx.clearRect(0,0,motionWidth,motionHeight);
-    previousLuma?.fill(0);
-    motionActivity=0;
-    hasPreviousMotion=false;
-    motionSample=0;
-    const h=conservativeHumanMotionHeuristic;
-    h.box=h.previousBox=null;
-    h.candidateSince=h.activeUntil=h.misses=0;
-    h.visible=false;
-    h.activePixels=0;
-    h.edgeRatio=1;
-    h.aspect=0;
-    h.score=h.lastScore=h.revealAmount=h.lastEval=0
-  }
-  function updateMotionShader(dt,hasCam,persistence=1.7,mode='both',t=0,reduced=false){
-    const currentTrack=stream?.getVideoTracks()[0]||null;
-    if(currentTrack!==motionTrack){
-      motionTrack=currentTrack;
-      resetMotionShader();
-      lastMotionVideoTime=-1
-    }
-    smokeCtx.globalCompositeOperation='source-over';
-    const memory=persistence*(.55+(+$('#smoothing').value/100)*1.65);
-    smokeCtx.fillStyle='rgba(0,0,0,'+(1-Math.pow(.5,dt/memory))+')';
-    smokeCtx.fillRect(0,0,motionWidth,motionHeight);
-    if(!hasCam||++motionSample%motionReadStride)return;
-    const videoTime=video.currentTime;
-    if(videoTime===lastMotionVideoTime)return;
-    lastMotionVideoTime=videoTime;
-    motionReadCtx.drawImage(video,0,0,motionWidth,motionHeight);
-    const frameData=motionReadCtx.getImageData(0,0,motionWidth,motionHeight).data;
-    if(!hasPreviousMotion){
-      for(let pixel=0,offset=0;pixel<previousLuma.length;pixel++,offset+=4)previousLuma[pixel]=frameData[offset]*.299+frameData[offset+1]*.587+frameData[offset+2]*.114;
-      hasPreviousMotion=true
-    }
-    else{
-      buildMotionMask(frameData,previousLuma,motionPixels.data);
-      // Em OCULTO, a heuristica de movimento roda sem depender de microfone; o som amplifica os shaders.
-      if(activeVideoLevel==='oculto')updateConservativeHumanMotionHeuristic(t,reduced);
-      motionMaskCtx.putImageData(motionPixels,0,0);
-      if(activeVideoLevel!=='oculto'||motionActivity>.0001||conservativeHumanMotionHeuristic.visible||conservativeHumanMotionHeuristic.revealAmount>.005){
-        smokeCtx.globalCompositeOperation='lighter';
-        smokeCtx.globalAlpha=.78;
-        smokeCtx.drawImage(motionMaskCanvas,0,0);
-        smokeCtx.globalAlpha=1;
-        smokeCtx.globalCompositeOperation='source-over'
+  function pickEdgePoint(){
+    const width=analysisState.width,
+    edge=analysisState.edge;
+    for(let attempt=0;attempt<8;attempt++){
+      const index=(Math.random()*edge.length)|0;
+      if(edge[index]>.42)return{
+        x:(index%width)/width,y:((index/width)|0)/analysisState.height
       }
     }
-    if(mode==='silhouette'||mode==='outline'||mode==='both'){
-      updateLiquidEdges(t,reduced);
-      edgeCtx.globalCompositeOperation='destination-in';
-      edgeCtx.drawImage(smokeCanvas,0,0,motionWidth,motionHeight);
-      edgeCtx.globalCompositeOperation='source-over'
+    return{
+      x:.25+Math.random()*.5,y:.2+Math.random()*.6
     }
-  }
-  function drawFallbackSilhouette(t,w,h,reduced,alpha){
-    const phase=reduced?0:Math.sin(t*.00022)*.035,
-    cx=w*.5,
-    cy=h*.51,
-    rx=Math.min(w,h)*(.13+phase),
-    ry=Math.min(w,h)*.31;
-    ctx.save();
-    ctx.globalCompositeOperation='screen';
-    ctx.globalAlpha=alpha;
-    ctx.filter='blur(1.2px)';
-    const glow=ctx.createRadialGradient(cx,cy-ry*.12,0,cx,cy,ry*1.35);
-    glow.addColorStop(0,'rgba(146,205,167,.25)');
-    glow.addColorStop(.55,'rgba(74,133,97,.12)');
-    glow.addColorStop(1,'rgba(40,92,61,0)');
-    ctx.fillStyle=glow;
-    ctx.beginPath();
-    ctx.moveTo(cx,cy-ry);
-    ctx.bezierCurveTo(cx+rx*.62,cy-ry,cx+rx*.62,cy-ry*.46,cx+rx*.48,cy-ry*.34);
-    ctx.bezierCurveTo(cx+rx*1.15,cy-ry*.13,cx+rx*1.2,cy+ry*.52,cx+rx*.86,cy+ry*.76);
-    ctx.bezierCurveTo(cx+rx*.62,cy+ry,cx-rx*.62,cy+ry,cx-rx*.86,cy+ry*.76);
-    ctx.bezierCurveTo(cx-rx*1.2,cy+ry*.52,cx-rx*1.15,cy-ry*.13,cx-rx*.48,cy-ry*.34);
-    ctx.bezierCurveTo(cx-rx*.62,cy-ry*.46,cx-rx*.62,cy-ry,cx,cy-ry);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.ellipse(cx,cy-ry*.63,rx*.24,ry*.18,0,0,Math.PI*2);
-    ctx.fill();
-    ctx.restore();
-  }
-  function drawFallbackContours(t,w,h,reduced,alpha){
-    const phase=reduced?0:t*.00016,
-    cx=w*.5,
-    cy=h*.5,
-    r=Math.min(w,h)*.25;
-    ctx.save();
-    ctx.globalCompositeOperation='screen';
-    ctx.globalAlpha=alpha;
-    ctx.strokeStyle='rgba(159,218,178,.72)';
-    ctx.lineWidth=Math.max(1,Math.min(2,w/700));
-    ctx.filter='blur(.6px)';
-    for(let i=0;i<5;i++){
-      const k=i/5,
-      off=Math.sin(phase+i*.9)*r*.055;
-      ctx.beginPath();
-      ctx.moveTo(cx-r*.72+off,cy-r*.62+k*r*.30);
-      ctx.bezierCurveTo(cx-r*.40-off,cy-r*.72+k*r*.23,cx+r*.18+off,cy-r*.42+k*r*.37,cx+r*.70-off,cy-r*.60+k*r*.31);
-      ctx.bezierCurveTo(cx+r*.88+off,cy-r*.05+k*r*.29,cx+r*.36-off,cy+r*.48+k*r*.32,cx+r*.76+off,cy+r*.64-k*r*.24);
-      ctx.stroke()
-    }
-    ctx.restore();
-  }
-  function drawBreathingMesh(t,w,h,smooth,bass,treble,reduced,alpha,motion){
-    const m=motion||{
-      amount:0,
-      activity:0,
-      mask:null,
-      box:null
-    },
-    energy=clamp(m.amount*1.4+m.activity*3.2+bass*.15,0,1);
-    let cx=w*.5,
-    cy=h*.5;
-    if(m.box){
-      const bx=m.box.cx/motionWidth*w,
-      by=m.box.cy/motionHeight*h;
-      cx=cx*.30+bx*.70;
-      cy=cy*.30+by*.70
-    }
-    const r=Math.min(w,h)*(.16+.06*energy+Math.min(.035,smooth*.035)),
-    phase=reduced?0:t*.00014,
-    warp=reduced?.012:.02+energy*.09+treble*.02,
-    breath=1+Math.sin(phase)*.025+bass*.035+energy*.14,
-    rot=reduced?0:energy*.22,
-    cos=Math.cos(rot),
-    sin=Math.sin(rot);
-    meshCtx.save();
-    meshCtx.setTransform(motionWidth/w,0,0,motionHeight/h,0,0);
-    meshCtx.globalCompositeOperation='source-over';
-    meshCtx.globalAlpha=1;
-    meshCtx.clearRect(0,0,w,h);
-    meshCtx.globalCompositeOperation='screen';
-    meshCtx.globalAlpha=alpha;
-    meshCtx.lineWidth=Math.max(.8,Math.min(1.2,w/900));
-    const shade=meshCtx.createRadialGradient(cx,cy,0,cx,cy,r*1.25);
-    shade.addColorStop(0,'rgba(168,224,184,.68)');
-    shade.addColorStop(.72,'rgba(142,201,162,.38)');
-    shade.addColorStop(1,'rgba(142,201,162,0)');
-    meshCtx.strokeStyle=shade;
-    meshCtx.beginPath();
-    for(let meridian=0;meridian<9;meridian++){
-      const lon=-Math.PI/2+Math.PI*meridian/8;
-      for(let step=0;step<=20;step++){
-        const lat=-Math.PI/2+Math.PI*step/20,
-        x=cx+r*breath*Math.cos(lat)*Math.sin(lon)+Math.sin(phase+lat*2+lon)*r*warp,
-        y=cy+r*Math.sin(lat)+Math.sin(phase+lon*2+lat)*r*warp*.65,
-        ox=x-cx,
-        oy=y-cy,
-        rx=cx+ox*cos-oy*sin,
-        ry=cy+ox*sin+oy*cos;
-        if(step===0)meshCtx.moveTo(rx,ry);
-        else meshCtx.lineTo(rx,ry)
-      }
-    }
-    for(let band=-3;
-    band<=3;
-    band++){
-      const lat=band*Math.PI/8;
-      for(let step=0;step<=28;step++){
-        const lon=-Math.PI/2+Math.PI*step/28,
-        x=cx+r*breath*Math.cos(lat)*Math.sin(lon)+Math.sin(phase+lat*2+lon)*r*warp,
-        y=cy+r*Math.sin(lat)+Math.sin(phase+lon*2+lat)*r*warp*.65,
-        ox=x-cx,
-        oy=y-cy,
-        rx=cx+ox*cos-oy*sin,
-        ry=cy+ox*sin+oy*cos;
-        if(step===0)meshCtx.moveTo(rx,ry);
-        else meshCtx.lineTo(rx,ry)
-      }
-    }
-    meshCtx.stroke();
-    const hasMotionMask=!!m.mask&&(m.amount>0||m.activity>.0001);
-    if(hasMotionMask){
-      const maskScale=Math.max(w/motionWidth,h/motionHeight),
-      maskWidth=motionWidth*maskScale,
-      maskHeight=motionHeight*maskScale,
-      maskX=(w-maskWidth)/2,
-      maskY=(h-maskHeight)/2;
-      meshCtx.globalCompositeOperation='destination-in';
-      meshCtx.globalAlpha=clamp(.45+energy*1.6,0,1.8);
-      meshCtx.drawImage(m.mask,0,0,motionWidth,motionHeight,maskX,maskY,maskWidth,maskHeight)
-    }
-    meshCtx.restore();
-    ctx.save();
-    ctx.globalCompositeOperation='screen';
-    ctx.globalAlpha=1;
-    ctx.drawImage(meshCanvas,0,0,w,h);
-    if(hasMotionMask){
-      const maskScale=Math.max(w/motionWidth,h/motionHeight),
-      maskWidth=motionWidth*maskScale,
-      maskHeight=motionHeight*maskScale,
-      maskX=(w-maskWidth)/2,
-      maskY=(h-maskHeight)/2;
-      ctx.globalCompositeOperation='screen';
-      ctx.globalAlpha=clamp(.42+energy*.48,0,.85);
-      ctx.drawImage(m.mask,0,0,motionWidth,motionHeight,maskX,maskY,maskWidth,maskHeight)
-    }
-    ctx.restore();
-  }
-  function drawModeImage(mode,shader,t,hasCam,smooth,bass,treble,w,h,activity=1){
-    const hidden=activeVideoLevel==='oculto',
-    quietScale=activity>.002?(hidden?.35+.65*activity:clamp(activity*1.8,0,1)):0,
-    reduced=shader.reduced,
-    motion=hasCam?{
-      amount:conservativeHumanMotionHeuristic.revealAmount,
-      activity:motionActivity,
-      mask:smokeCanvas,
-      box:conservativeHumanMotionHeuristic.box
-    }
-    :{
-      amount:0,
-      activity:0,
-      mask:null,
-      box:null
-    },
-    scale=Math.max(w/motionWidth,h/motionHeight),
-    dw=motionWidth*scale,
-    dh=motionHeight*scale,
-    dx=(w-dw)/2,
-    dy=(h-dh)/2,
-    drift=reduced?0:Math.sin(t*.00018)*Math.min(5,h*.004);
-    ctx.save();
-    if(hasCam&&(mode==='silhouette'||mode==='both'))drawCanvasLayer(ctx,edgeCanvas,{
-      operation:'screen',alpha:shader.smokeAlpha*quietScale,filter:'blur('+shader.smokeBlur+'px) saturate(.8)',x:dx,y:dy+drift,width:dw,height:dh
-    })
-    if(hasCam&&(mode==='outline'||mode==='both')){
-      ctx.globalCompositeOperation='lighter';
-      ctx.filter='blur(.55px) saturate(.75)';
-      ctx.globalAlpha=shader.contourAlpha*(.25+(+$('#edge').value/100)*1.25)*quietScale;
-      ctx.drawImage(edgeCanvas,dx,dy,dw,dh);
-      const liquidX=reduced?0:Math.sin(t*.00017)*Math.min(4,w*.003),
-      liquidY=reduced?0:Math.cos(t*.00013)*Math.min(3,h*.003);
-      ctx.globalAlpha=shader.contourAlpha*.42*quietScale;
-      ctx.filter='blur(1.8px) saturate(.65)';
-      ctx.drawImage(edgeCanvas,dx+liquidX,dy+liquidY,dw,dh)
-    }
-    if(!hasCam&&(mode==='silhouette'||mode==='both'))drawFallbackSilhouette(t,w,h,reduced,mode==='both'?.16:.28);
-    if(!hasCam&&(mode==='outline'||mode==='both'))drawFallbackContours(t,w,h,reduced,mode==='both'?.18:.32);
-    if(mode==='abstract')drawBreathingMesh(t,w,h,smooth,bass,treble,reduced,(hidden?Math.max(shader.meshAlpha,.8)*quietScale:shader.meshAlpha),motion);
-    ctx.restore();
-  }
-  function getSoundReveal(){
-    if(!analyser)return 0;
-    if(activeVideoLevel==='oculto'){
-      const floor=Math.max(.0008,+$('#gate').value/1000*.4,audioState[10]*.5);
-      return clamp((audioState[1]-floor)*Math.max(14,+$('#sens').value/2.5),0,.95);
-    }
-    return clamp((audioState[1]-Math.max(.003,+$('#gate').value/1000,audioState[10]*1.35))*Math.max(8,+$('#sens').value/4),0,.82)
-  }
-  function drawRevealedImage(t,shader,level,vivid,green,wave,fish,glitch){
-    if(!video.videoWidth||!video.videoHeight)return 0;
-    const hidden=level==='oculto',
-    cap=hidden?.42:level==='sutil'?.20:.55,
-    sound=hidden?soundRevealSmooth:getSoundReveal(),
-    heuristic=conservativeHumanMotionHeuristic,
-    motionReveal=clamp(Math.max(heuristic.revealAmount,motionActivity*16),0,1),
-    activity=clamp(Math.max(motionReveal,sound*.65),0,1),
-    baseReveal=0;
-    if(hidden&&activity<=.002)return 0;
-    if(hidden&&shader.mode==='abstract')return Math.max(activity,baseReveal);
-    const scale=Math.max(w/video.videoWidth,h/video.videoHeight),
-    vw=video.videoWidth*scale,
-    vh=video.videoHeight*scale,
-    vx=(w-vw)/2,
-    vy=(h-vh)/2;
-    revealCtx.setTransform(dpr,0,0,dpr,0,0);
-    revealCtx.clearRect(0,0,w,h);
-    revealCtx.globalCompositeOperation='source-over';
-    revealCtx.globalAlpha=1;
-    revealCtx.filter=hidden?'grayscale(1) contrast(2.85) sepia(.14) hue-rotate(158deg) saturate(.42) brightness(.82)':shader.filter;
-    revealCtx.drawImage(video,vx,vy,vw,vh);
-    revealCtx.filter='none';
-    revealMaskCtx.setTransform(dpr,0,0,dpr,0,0);
-    revealMaskCtx.clearRect(0,0,w,h);
-    revealMaskCtx.globalCompositeOperation='source-over';
-    revealMaskCtx.globalAlpha=baseReveal;
-    revealMaskCtx.fillStyle='#fff';
-    revealMaskCtx.fillRect(0,0,w,h);
-    revealMaskCtx.globalAlpha=1;
-    const mw=motionWidth,
-    mh=motionHeight,
-    ms=Math.max(w/mw,h/mh),
-    mdw=mw*ms,
-    mdh=mh*ms,
-    mdx=(w-mdw)/2,
-    mdy=(h-mdh)/2;
-    revealMaskCtx.filter='contrast('+Math.round(1.35+(+$('#edge').value/100)*2.2)+')';
-    if(!hidden||motionActivity>.0001||heuristic.revealAmount>.005){
-      revealMaskCtx.globalAlpha=hidden?clamp(.35+sound*1.2,0,1.6):1;
-      revealMaskCtx.drawImage(smokeCanvas,mdx,mdy,mdw,mdh);
-      revealMaskCtx.globalAlpha=1
-    }
-    revealMaskCtx.filter='none';
-    if(sound>.002){
-      const pulseWave=hidden?(shader.reduced?0:Math.sin(t*.00035)*.025):(shader.reduced?0:Math.sin(t*.0011)*.08),
-      radius=Math.max(w,h)*(hidden?.04+sound*.14:.12+sound*.58+pulseWave),
-      glow=revealMaskCtx.createRadialGradient(w*.5,h*.5,0,w*.5,h*.5,radius);
-      glow.addColorStop(0,'rgba(255,255,255,'+(sound*(hidden?.16:.75))+')');
-      glow.addColorStop(.45,'rgba(255,255,255,'+(sound*(hidden?.08:.32))+')');
-      glow.addColorStop(1,'rgba(255,255,255,0)');
-      revealMaskCtx.globalCompositeOperation='lighter';
-      revealMaskCtx.fillStyle=glow;
-      revealMaskCtx.fillRect(0,0,w,h);
-      revealMaskCtx.globalCompositeOperation='source-over'
-    }
-    revealCtx.globalCompositeOperation='destination-in';
-    revealCtx.globalAlpha=1;
-    revealCtx.drawImage(revealMaskCanvas,0,0,w,h);
-    revealCtx.globalCompositeOperation='source-over';
-    const effective=cap*clamp(.22+vivid*.78,0,1)*shader.imageAlpha*(hidden?Math.max(heuristic.revealAmount,sound*.65,baseReveal):1);
-    ctx.save();
-    ctx.globalCompositeOperation=shader.imageBlend;
-    ctx.globalAlpha=effective;
-    ctx.filter=hidden?'contrast('+Math.max(2.25,shader.imageContrast)+') saturate('+Math.min(.36,shader.imageSaturation)+') brightness(.82)':'contrast('+shader.imageContrast+') saturate('+shader.imageSaturation+')';
-    const waves=wave/100,
-    fishPower=fish/100,
-    glitchPower=glitch/100,
-    step=5,
-    phase=shader.reduced?0:t*.00022;
-    if(waves>0||fishPower>0){
-      for(let y=0;y<h;y+=step){
-        const center=(y+step*.5)/h-.5,
-        curve=Math.max(0,1-center*center*3.2),
-        waveX=waves*(Math.sin(phase+y*.012)+Math.sin(phase*.63+y*.006))*13,
-        scaleX=1+fishPower*curve*.62,
-        dw=w*scaleX,
-        dx=(w-dw)/2+waveX;
-        ctx.drawImage(revealCanvas,0,y*dpr,canvas.width,Math.min(step*dpr,canvas.height-y*dpr),dx,y,dw,step+1)
-      }
-    }
-    else ctx.drawImage(revealCanvas,0,0,w,h);
-    ctx.filter='none';
-    ctx.globalCompositeOperation='screen';
-    if(glitchPower>0){
-      const offset=glitchPower*(shader.reduced?1:1+Math.sin(phase*1.4)*.15)*8;
-      ctx.globalAlpha=effective*.23*glitchPower;
-      ctx.filter='sepia(1) saturate(8) hue-rotate(300deg)';
-      ctx.drawImage(revealCanvas,-offset,0,w,h);
-      ctx.filter='sepia(1) saturate(8) hue-rotate(145deg)';
-      ctx.drawImage(revealCanvas,offset,0,w,h)
-    }
-    if(green<100){
-      ctx.globalCompositeOperation='multiply';
-      ctx.globalAlpha=(100-green)/100*.20;
-      ctx.fillStyle='#a9c4ad';
-      ctx.fillRect(0,0,w,h)
-    }
-    ctx.restore();
-    return Math.max(activity,baseReveal)
-  }
-  function pulse(power=.25,x=.5,y=.5,bass=0,treble=0,dominant=0){
-    const hue=Math.round(clamp(dominant,0,1)*100);
-    const color=hue>58?'90,235,255':'90,'+Math.round(150+hue)+',125';
-    pulses.push({
-      x:x,y:y,r:0,power:clamp(power,0,1),color:color,bass:bass,treble:treble
-    });
-    if(pulses.length>6)pulses.shift()
   }
   function sampleAudio(now){
     if(!analyser||!audioCtx)return;
     analyser.getFloatTimeDomainData(timeData);
     analyser.getFloatFrequencyData(freqData);
-    const measured=measureAudioBands(timeData,freqData,audioCtx.sampleRate),
+    const measured=measureAudioBands(timeData,freqData,audioCtx.sampleRate,bandValues),
     {
-      rms,
-      peak
+      rms,peak,bass,mid,treble,nyquist,dominantBin
     }
     =measured,
-    prev=audioState[0];
+    previousRms=audioState[0];
     if(now-micStartedAt<3000){
       noiseSum+=rms;
       noiseFrames++;
       audioState[10]=noiseSum/noiseFrames
     }
-    else if(!noiseFrames)audioState[10]=.006;
-    const {
-      nyquist,
-      dominantBin
+    else if(!noiseFrames){
+      noiseFrames=1;
+      audioState[10]=.006
     }
-    =measured;
-    let {
-      bass,
-      mid,
-      treble
+    for(let i=0;i<8;i++){
+      const target=clamp(bandValues[i]/(bandsMax[i]*.72),0,1);
+      bandsMax[i]=Math.max(bandValues[i],bandsMax[i]*.998);
+      bandsSmooth[i]+=(target-bandsSmooth[i])*(target>bandsSmooth[i]?.55:.1)
     }
-    =measured;
-    const n=freqData.length;
     bassMax=Math.max(bass,bassMax*.998);
     midMax=Math.max(mid,midMax*.998);
     trebleMax=Math.max(treble,trebleMax*.998);
     const b=clamp(bass/(bassMax*.72),0,1),
     m=clamp(mid/(midMax*.72),0,1),
     tr=clamp(treble/(trebleMax*.72),0,1),
-    smoothing=+$('#smoothing').value/100,
-    smooth=audioState[1]*smoothing+rms*(1-smoothing),
-    delta=Math.max(0,rms-prev),
+    release=+$('#smoothing').value/100,
+    smooth=audioState[1]+(rms-audioState[1])*(rms>audioState[1]?.5:Math.max(.06,(1-release)*.4)),
+    delta=Math.max(0,rms-previousRms),
     transient=delta>Math.max(.025,audioState[10]*.85)&&rms>audioState[10]*1.7,
     force=clamp(delta*7+peak*.45,0,1),
-    dom=clamp((dominantBin*nyquist/n)/8000,0,1);
+    dom=clamp((dominantBin*nyquist/freqData.length)/8000,0,1);
     audioState[0]=rms;
     audioState[1]=smooth;
     audioState[2]=peak;
@@ -809,12 +290,56 @@ from './renderers.js';
     audioState[8]=force;
     audioState[9]=now;
     if(now-lastAudioLog>=500){
-      console.debug('[Psyco_Visão][AUDIO] RMS='+rms.toFixed(4)+' Peak='+peak.toFixed(3)+' Bass='+b.toFixed(3)+' Mid='+m.toFixed(3)+' Treble='+tr.toFixed(3)+' Transient='+(transient?'yes':'no'));
+      console.debug('[Psyco_Visão][AUDIO] RMS='+rms.toFixed(4)+' Bass='+b.toFixed(3)+' Mid='+m.toFixed(3)+' Treble='+tr.toFixed(3)+' Transient='+(transient?'yes':'no'));
       lastAudioLog=now
     }
   }
-  function soundlessAudioGlow(value,gateValue){
-    return Math.max(0,value-gateValue)*1.4
+  function updateSonarSpawns(t){
+    const shader=activeShader,
+    now=audioState[9]||t,
+    sensitivity=+$('#sens').value/40,
+    gate=Math.max(.004,Math.max(+$('#gate').value/1000,audioState[10]*1.5)/Math.max(.25,sensitivity)),
+    rms=audioState[0],
+    above=Math.max(0,rms-gate);
+    if(analyser){
+      const triggered=(audioState[7]>0&&rms>gate)||above>.006/Math.max(.25,sensitivity);
+      if(triggered&&now-lastPulseAt>(audioState[7]?90:140)){
+        const strength=clamp((.14+above*14+audioState[8]*.7)*sensitivity,0,1),
+        bass=audioState[3],
+        mid=audioState[4],
+        treble=audioState[5];
+        if(treble>bass*1.12&&strength>.2)sonar.spawnTreble(Math.round(5+treble*11),strength,pickEdgePoint,shader.amberMix);
+        else if(bass>=mid)sonar.spawnRing({
+          power:clamp(strength*1.15,0,1),band:'bass'
+        });
+        else sonar.spawnRing({
+          power:strength,band:'mid'
+        });
+        lastPulseAt=now;
+        lastSilenceAt=now;
+        hud.noteActivity()
+      }
+      else if(now-lastSilenceAt>2000/shader.breathRate){
+        sonar.spawnRing({
+          power:.06+shader.breathDepth*.06,band:'bass'
+        });
+        lastSilenceAt=now
+      }
+      if((bandsSmooth[6]+bandsSmooth[7])*.5>.42&&Math.random()<.1)sonar.spawnTreble(2,clamp(bandsSmooth[6],0,1),pickEdgePoint,shader.amberMix)
+    }
+    else if(motionActivity>.002&&now-lastPulseAt>260){
+      sonar.spawnRing({
+        power:clamp(.12+motionActivity*40,0,1),band:'mid'
+      });
+      lastPulseAt=now;
+      lastSilenceAt=now
+    }
+    else if(now-lastSilenceAt>2200/shader.breathRate){
+      sonar.spawnRing({
+        power:.06+shader.breathDepth*.06,band:'bass'
+      });
+      lastSilenceAt=now
+    }
   }
   function draw(t){
     raf=requestAnimationFrame(draw);
@@ -824,132 +349,71 @@ from './renderers.js';
       ctx.fillStyle='#000';
       ctx.fillRect(0,0,w,h);
       setTimeout(()=>document.body.classList.remove('first-frame'),40);
+      last=t;
       return
     }
-    updateRenderPerformance(t);
     const dt=Math.min((t-last)/1000||.016,.06);
     last=t;
+    updateFrameBudget(dt);
     sampleAudio(t);
-    if(activeVideoLevel==='oculto'){
-      const rawSoundReveal=getSoundReveal();
-      soundRevealSmooth=analyser?soundRevealSmooth*.7+rawSoundReveal*.3:0
-    }
-    else soundRevealSmooth=0;
-    const rms=audioState[0],
-    smooth=audioState[1],
-    peak=audioState[2],
-    bass=audioState[3],
-    mid=audioState[4],
-    treble=audioState[5],
-    dominant=audioState[6],
-    transient=audioState[7],
-    transientForce=audioState[8],
-    noiseFloor=audioState[10],
-    sensitivity=+$('#sens').value/40,
-    gate=Math.max(.004,Math.max(+$('#gate').value/1000,noiseFloor*1.5)/Math.max(.25,sensitivity)),
-    above=Math.max(0,rms-gate),
-    now=audioState[9]||t;
-    if(analyser){
-      const triggered=(transient>0&&rms>gate)||above>.006/Math.max(.25,sensitivity);
-      if(triggered&&now-lastPulseAt>(transient?65:105)){
-        const strength=clamp((.10+above*15+transientForce*.75)*sensitivity,0,1);
-        let x=.5,
-        y=.5;
-        if(treble>bass){
-          originSide=1-originSide;
-          x=originSide?.82:.18;
-          y=.42+mid*.16
-        }
-        pulse(strength,x,y,bass,treble,dominant);
-        lastPulseAt=now;
-        lastSilenceAt=now
+    const shader=getDreamShader($('#mode').value,activeDreamPreset,t,reducedMotionQuery?.matches);
+    activeShader=shader;
+    const hasCam=video.readyState>=2&&video.videoWidth>0;
+    if(hasCam){
+      const crop=coverRect(video.videoWidth,video.videoHeight,ANALYSIS_WIDTH,ANALYSIS_HEIGHT);
+      motionReadCtx.drawImage(video,crop.sx,crop.sy,crop.sw,crop.sh,0,0,ANALYSIS_WIDTH,ANALYSIS_HEIGHT);
+      const frame=motionReadCtx.getImageData(0,0,ANALYSIS_WIDTH,ANALYSIS_HEIGHT);
+      if(analysisState.hasPrevious){
+        analyzeMotionFrame(frame.data,analysisState,+$('#edge').value/100,true);
+        motionActivity=analysisState.activity
       }
-      else if(now-lastSilenceAt>2000){
-        pulse(.12,.5,.5,0,0,0);
-        lastSilenceAt=now
+      else{
+        analyzeMotionFrame(frame.data,analysisState,+$('#edge').value/100,false);
+        analysisState.motion.fill(0);
+        motionActivity=0
       }
     }
-    else if(started&&motionActivity>.001&&videoPresence>.001&&now-lastSilenceAt>2000){
-      pulse(.12,.5,.5,0,0,0);
-      lastSilenceAt=now
-    }
+    updateSonarSpawns(t);
+    const sensitivity=+$('#sens').value/40,
+    gate=Math.max(.004,Math.max(+$('#gate').value/1000,audioState[10]*1.5)/Math.max(.25,sensitivity)),
+    rmsEnvelope=analyser?clamp(Math.max(0,audioState[0]-gate)*14+audioState[8]*.6,0,1):clamp(motionActivity*30,0,1);
+    sonar.step(dt,{
+      shader,rmsEnvelope,motion:analysisState
+    });
     if(videoPresence!==videoPresenceTarget){
-      const videoProgress=clamp((t-videoPresenceStart)/600,0,1),
-      videoEase=1-Math.pow(1-videoProgress,3);
-      videoPresence=videoPresenceFrom+(videoPresenceTarget-videoPresenceFrom)*videoEase;
-      if(videoProgress===1)videoPresenceFrom=videoPresenceTarget
+      const progress=clamp((t-videoPresenceStart)/600,0,1),
+      ease=1-Math.pow(1-progress,3);
+      videoPresence=videoPresenceFrom+(videoPresenceTarget-videoPresenceFrom)*ease;
+      if(progress===1)videoPresenceFrom=videoPresenceTarget
     }
-    energy=smooth;
+    let decay=clamp(shader.decay+((+$('#trail').value/100)-.84)*.08,.86,.965);
+    if(shader.reduced)decay=Math.min(decay,.905);
+    let underlay=false;
+    if(hasCam&&activeVideoLevel!=='oculto'){
+      sonar.buildMask(analysisState,activeVideoLevel,+$('#edge').value/100);
+      underlay=sonar.renderUnderlay(video)
+    }
+    sonar.renderEnergy(shader,analysisState);
+    sonar.accumulate(decay);
     const vivid=+$('#vivid').value/100,
-    trail=+$('#trail').value/100,
-    shader=getDreamShader($('#mode').value,activeDreamPreset,t);
-    trailCtx.setTransform(dpr,0,0,dpr,0,0);
-    trailCtx.globalCompositeOperation='source-over';
-    trailCtx.fillStyle='rgba(0,0,0,'+Math.max(.72,1-trail*.25)+')';
-    trailCtx.fillRect(0,0,w,h);
-    trailCtx.globalCompositeOperation='lighter';
-    const hasCam=video.readyState>=2;
-    const motionRate=shader.reduced?.55:1;
-    updateMotionShader(dt*motionRate,hasCam,shader.persistence,shader.mode,t,shader.reduced);
-    for(let i=pulses.length-1;i>=0;i--){
-      const p=pulses[i];
-      p.r+=dt*motionRate*(100+220*p.power+90*p.bass);
-      p.power*=Math.pow(.18,dt);
-      if(p.power<.018){
-        pulses.splice(i,1);
-        continue
-      }
-      const x=p.x*w,
-      y=p.y*h,
-      r=p.r,
-      thickness=12+10*p.treble,
-      ringAlpha=(analyser?1:.72)*shader.pulseAlpha;
-      const grad=trailCtx.createRadialGradient(x,y,Math.max(0,r-thickness),x,y,r+18);
-      grad.addColorStop(0,'rgba('+p.color+',0)');
-      grad.addColorStop(.72,'rgba('+p.color+','+(p.power*.045*ringAlpha)+')');
-      grad.addColorStop(.94,'rgba('+p.color+','+(p.power*.12*ringAlpha)+')');
-      grad.addColorStop(1,'rgba('+p.color+',0)');
-      trailCtx.fillStyle=grad;
-      trailCtx.beginPath();
-      trailCtx.arc(x,y,r+18,0,Math.PI*2);
-      trailCtx.fill();
-      trailCtx.strokeStyle='rgba('+p.color+','+(p.power*.12*ringAlpha)+')';
-      trailCtx.lineWidth=.65+1.8*p.power+1.6*p.treble;
-      trailCtx.beginPath();
-      trailCtx.arc(x,y,r,0,Math.PI*2);
-      trailCtx.stroke();
-    }
+    breath=clamp((.62+vivid*.38)*(.94+.06*Math.sin(t*.00045*shader.breathRate))+(analyser?audioState[1]*.3:0),0,1),
+    blindSpot=Math.max(24,h*(.05+shader.breathDepth*.012+audioState[1]*.3));
     ctx.setTransform(dpr,0,0,dpr,0,0);
+    ctx.globalCompositeOperation='source-over';
+    ctx.globalAlpha=1;
     ctx.fillStyle='#000000';
     ctx.fillRect(0,0,w,h);
-    let revealActivity=0;
-    if(hasCam)revealActivity=drawRevealedImage(t,shader,activeVideoLevel,vivid,+$('#green').value,+$('#wave').value,+$('#fish').value,+$('#glitch').value);
-    if(activeVideoLevel==='oculto'&&shader.mode==='abstract')revealActivity=Math.max(revealActivity,soundRevealSmooth,conservativeHumanMotionHeuristic.revealAmount);
-    const cameraMotionReveal=clamp(Math.max(conservativeHumanMotionHeuristic.revealAmount,motionActivity*16),0,1),
-    activation=clamp(Math.max(revealActivity,cameraMotionReveal,soundRevealSmooth),0,1),
-    modeCanDraw=hasCam&&activation>.002;
-    if(modeCanDraw)drawModeImage(shader.mode,shader,t,hasCam,smooth,bass,treble,w,h,activation);
-    ctx.globalCompositeOperation='screen';
-    ctx.globalAlpha=(activeVideoLevel==='oculto'?0:shader.screenAlpha*(analyser?1:.72))*Math.max(.08,trail*.38);
-    ctx.drawImage(trailCanvas,0,0,w,h);
-    ctx.globalAlpha=1;
-    ctx.globalCompositeOperation='source-over';
-    const hidden=activeVideoLevel==='oculto',
-    breath=hidden ? .0008+Math.sin(t*.00038)*.00028 : analyser ? .0006+smooth*.025+bass*.004 : .00035+Math.sin(t*.00038)*.00018,
-    glow=ctx.createRadialGradient(w*.5,h*.5,0,w*.5,h*.5,Math.max(w,h)*(.7+smooth*.18));
-    glow.addColorStop(0,'rgba(8,35,20,'+clamp(breath,0,.35)+')');
-    glow.addColorStop(1,'rgba(0,0,0,0)');
-    ctx.fillStyle=glow;
-    ctx.globalAlpha=activation>.002?(hidden?.22:1):0;
-    ctx.fillRect(0,0,w,h);
-    ctx.globalAlpha=1;
-    const flash=activeVideoLevel==='oculto'?0:clamp(peak*.04+transientForce*.015,0,.025);
+    sonar.compose(ctx,{
+      width:w,height:h,videoLevel:underlay?videoPresence:0,videoGain:shader.videoGain,vivid,breath,blindSpot
+    });
+    const flash=clamp(audioState[2]*.05+audioState[8]*.012,0,.03);
     if(flash>.008){
-      ctx.fillStyle='rgba(105,255,175,'+flash+')';
+      ctx.fillStyle='rgba(150,255,190,'+flash+')';
       ctx.fillRect(0,0,w,h)
     }
   }
   draw(0);
+
   function notify(s){
     const n=$('#notice');
     n.textContent=s;
@@ -969,11 +433,15 @@ from './renderers.js';
     name.textContent=state==='on'?'● OLHO ATIVO':state==='switching'?'● OLHO TROCANDO':state==='loading'?'○ PERMITA A CÂMERA':state==='recovering'?'○ OLHO CEGO':state==='error'?'○ OLHO FECHADO':'○ OLHO CEGO';
     note.textContent=detail||cameraStateDetail||(state==='on'?'Câmera funcionando':state==='switching'?'Virando a câmera...':state==='loading'?'Toque em Permitir no aviso do navegador':state==='recovering'?'Tentando abrir de novo':state==='denied'?'Toque no cadeado e permita a câmera':'Toque aqui para tentar de novo');
     button.setAttribute('aria-busy',busy?'true':'false');
+    button.setAttribute('aria-label','Câmera: '+name.textContent.replace(/^[●○]\s*/,''));
     button.disabled=busy;
     switchButton.hidden=state!=='on'||!cameraSwitchAvailable;
     switchButton.disabled=busy;
-    switchButton.textContent=cameraFacingMode==='environment'?'VIRAR PARA A FRENTE':'VIRAR PARA TRÁS';
-    document.body.classList.toggle('dream-awake',state==='on')
+    switchButton.setAttribute('aria-label',cameraFacingMode==='environment'?'Virar para a câmera da frente':'Virar para a câmera de trás');
+    document.body.classList.toggle('dream-awake',state==='on');
+    document.body.dataset.cam=state;
+    if(state==='denied'||state==='error')hud.setError('camera');
+    else if(state==='on'||state==='off')hud.clearError('camera')
   }
   function refreshCameraChoices(){
     if(!navigator.mediaDevices?.enumerateDevices){
@@ -1160,18 +628,23 @@ from './renderers.js';
     name.textContent=state==='on'?'● ESCUTA ATIVA':state==='loading'?'○ ESCUTA DESPERTANDO':state==='error'?'○ ESCUTA IMPEDIDA':'○ ESCUTA MUDA';
     note.textContent=state==='on'?'Microfone funcionando':state==='loading'?'Aguarde um instante':state==='error'?'Toque para tentar de novo':'Toque em ESCUTAR para acordar';
     button.setAttribute('aria-busy',state==='loading'?'true':'false');
+    button.setAttribute('aria-label','Microfone: '+name.textContent.replace(/^[●○]\s*/,''));
     button.disabled=state==='loading';
     action.disabled=state==='loading';
     $('#micEnable').disabled=state==='loading';
-    action.textContent=state==='on'?'SILENCIAR':'ESCUTAR';
-    action.classList.toggle('is-active',state==='on')
+    const label=action.querySelector('.quick-label');
+    if(label)label.textContent=state==='on'?'SILENCIAR':'ESCUTAR';
+    else action.textContent=state==='on'?'SILENCIAR':'ESCUTAR';
+    action.classList.toggle('is-active',state==='on');
+    document.body.dataset.mic=state;
+    if(state==='error')hud.setError('mic');
+    else hud.clearError('mic')
   }
   function handleMicInterruption(){
     if(!micStream)return;
     const failedStream=micStream;
     micStream=null;
     analyser=null;
-    soundRevealSmooth=0;
     audioCtx?.close();
     audioCtx=null;
     $('#micEnable').checked=false;
@@ -1182,36 +655,77 @@ from './renderers.js';
     updateMicState('error');
     notify('A escuta foi interrompida. Toque em ESCUTAR para tentar de novo.')
   }
-  function reveal(){
-    const p=$('#panel');
-    p.classList.add('show');
-    document.body.classList.remove('sleeping');
-    clearTimeout(panelTimer);
-    panelTimer=setTimeout(()=>{
-      if(!$('#wake').checked){
-        p.classList.remove('show');
-        document.body.classList.add('sleeping')
-      }
-    },8000)
+  let presetCloseTimer=0,
+  sheetClosedAt=0;
+  const uiMemory=readStorageJSON('psyco_visao_ui',{});
+  function openSheet(){
+    clearTimeout(presetCloseTimer);
+    hud.hold(true);
+    hud.show();
+    $('#panel').classList.add('show')
   }
-  function wakeForMoment(){
-    document.body.classList.remove('sleeping');
-    clearTimeout(panelTimer);
-    panelTimer=setTimeout(()=>{
-      if(!$('#panel').classList.contains('show')&&!$('#shareDialog').open&&!$('#wake').checked)document.body.classList.add('sleeping')
-    },4200)
+  function closeSheet(){
+    sheetClosedAt=performance.now();
+    $('#panel').classList.remove('show');
+    hud.hold(false)
   }
-  $('#settingsOpen').onclick=reveal;
-  $('#panel').addEventListener('pointerdown',()=>reveal());
-  $('#panel').addEventListener('keydown',()=>reveal());
-  $('#cameraStatus').onclick=()=>{
-    wakeForMoment();
-    if(!started)startCamera(cameraFacingMode)
-  };
-  $('#microphoneStatus').onclick=()=>$('#listenToggle').click();
-  $('#listenToggle').onclick=()=>{
-    wakeForMoment();
+  function activateTab(name){
+    document.querySelectorAll('#panel .tab').forEach(tab=>{
+      const active=tab.dataset.tab===name;
+      tab.classList.toggle('active',active);
+      tab.setAttribute('aria-selected',String(active))
+    });
+    document.querySelectorAll('#panel .page').forEach(page=>page.classList.toggle('active',page.id===name))
+  }
+  document.querySelectorAll('#panel .tab').forEach(tab=>tab.addEventListener('click',()=>activateTab(tab.dataset.tab)));
+  document.querySelectorAll('.hint-toggle').forEach(toggle=>toggle.addEventListener('click',()=>{
+    const target=document.getElementById(toggle.dataset.hint);
+    if(!target)return;
+    target.hidden=!target.hidden;
+    toggle.setAttribute('aria-expanded',String(!target.hidden))
+  }));
+  $('#close').onclick=closeSheet;
+  document.addEventListener('pointerdown',e=>{
+    if(!$('#panel').classList.contains('show'))return;
+    if($('#shareDialog').open)return;
+    if(e.target.closest('#panel')||e.target.closest('#settingsOpen'))return;
+    closeSheet()
+  },true);
+  (function sheetDrag(){
+    const grab=$('#panel').querySelector('.panel-grab');
+    if(!grab)return;
+    let dragId=-1,
+    startY=0,
+    dragging=false;
+    grab.addEventListener('pointerdown',e=>{
+      dragId=e.pointerId;
+      startY=e.clientY;
+      dragging=false;
+      grab.setPointerCapture?.(e.pointerId)
+    });
+    grab.addEventListener('pointermove',e=>{
+      if(e.pointerId!==dragId)return;
+      const dy=e.clientY-startY;
+      if(!dragging&&Math.abs(dy)<14)return;
+      dragging=true;
+      $('#panel').style.transition='none';
+      $('#panel').style.transform='translateY('+Math.max(0,dy)+'px)'
+    });
+    const finish=e=>{
+      if(e.pointerId!==dragId)return;
+      dragId=-1;
+      const dy=e.clientY-startY;
+      $('#panel').style.transition='';
+      $('#panel').style.transform='';
+      if(dragging&&dy>90)closeSheet();
+      dragging=false
+    };
+    grab.addEventListener('pointerup',finish);
+    grab.addEventListener('pointercancel',finish)
+  })();
+  function toggleMic(){
     const mic=$('#micEnable');
+    if(mic.disabled)return;
     mic.checked=!mic.checked;
     mic.dispatchEvent(new Event('change',{
       bubbles:true
@@ -1220,23 +734,49 @@ from './renderers.js';
       navigator.vibrate?.(30)
     }
     catch{}
+  }
+  function toggleFullscreen(){
+    if(!document.fullscreenElement)document.documentElement.requestFullscreen?.().catch(()=>notify('A tela cheia não está disponível neste aparelho.'));
+    else document.exitFullscreen?.()
+  }
+  function cycleVideoLevel(){
+    const order=['oculto','sutil','visivel'],
+    next=order[(order.indexOf(activeVideoLevel)+1)%order.length];
+    setVideoPresence(next);
+    try{
+      navigator.vibrate?.(20)
+    }
+    catch{}
+  }
+  function cycleMode(){
+    const select=$('#mode'),
+    order=['silhouette','outline','both','abstract'];
+    select.value=order[(order.indexOf(select.value)+1)%order.length];
+    select.dispatchEvent(new Event('change',{
+      bubbles:true
+    }));
+    notify('Modo: '+(select.options[select.selectedIndex]?.textContent||select.value))
+  }
+  $('#settingsOpen').onclick=openSheet;
+  $('#cameraStatus').onclick=()=>{
+    if(!started)startCamera(cameraFacingMode)
+  };
+  $('#microphoneStatus').onclick=toggleMic;
+  $('#listenToggle').onclick=()=>{
+    if(hud.hidden){
+      hud.show();
+      return
+    }
+    toggleMic()
   };
   $('#shareOpen').onclick=()=>{
-    wakeForMoment();
     const d=$('#shareDialog');
     if(d.showModal)d.showModal();
     else d.setAttribute('open','')
   };
-  document.querySelectorAll('[data-close-share]').forEach(b=>b.onclick=()=>{
-    $('#shareDialog').close?.();
-    wakeForMoment()
-  });
-  $('#close').onclick=()=>{
-    $('#panel').classList.remove('show');
-    wakeForMoment()
-  };
-  canvas.addEventListener('pointerdown',()=>reveal());
+  document.querySelectorAll('[data-close-share]').forEach(b=>b.onclick=()=>$('#shareDialog').close?.());
   $('#switchCamera').onclick=()=>switchCamera();
+  $('#fullscreen').onclick=toggleFullscreen;
   document.querySelectorAll('#presets .preset').forEach(button=>button.addEventListener('click',()=>{
     const preset=button.dataset.preset;
     if(!applyDreamPreset(preset,$))return;
@@ -1248,8 +788,175 @@ from './renderers.js';
     activeDreamPreset=preset;
     updateLabels();
     persist();
-    pulse(.6,.5,.5)
+    clearTimeout(presetCloseTimer);
+    presetCloseTimer=setTimeout(closeSheet,600)
   }));
+  const radial=$('#radialMenu'),
+  radialScrim=$('#radialScrim');
+  function openRadial(x,y){
+    const size=132,
+    left=Math.round(clamp(x-size/2,8,Math.max(8,innerWidth-size-8))),
+    top=Math.round(clamp(y-size/2,8,Math.max(8,innerHeight-size-8)));
+    radial.style.left=left+'px';
+    radial.style.top=top+'px';
+    radialScrim.hidden=false;
+    radial.hidden=false;
+    hud.hold(true);
+    try{
+      navigator.vibrate?.(24)
+    }
+    catch{}
+  }
+  function closeRadial(){
+    if(radial.hidden)return;
+    radial.hidden=true;
+    radialScrim.hidden=true;
+    hud.hold(false)
+  }
+  radialScrim.addEventListener('pointerdown',closeRadial);
+  $('#radialListen').onclick=()=>{
+    closeRadial();
+    toggleMic()
+  };
+  $('#radialMode').onclick=()=>{
+    closeRadial();
+    cycleMode()
+  };
+  $('#radialSettings').onclick=()=>{
+    closeRadial();
+    openSheet()
+  };
+  $('#radialFullscreen').onclick=()=>{
+    closeRadial();
+    toggleFullscreen()
+  };
+  const tapState={
+    id:-1,x:0,y:0,moved:false,long:false,timer:0,pending:0
+  };
+  let lastTapAt=0,
+  lastTapX=0,
+  lastTapY=0;
+  canvas.addEventListener('contextmenu',e=>e.preventDefault());
+  canvas.addEventListener('pointerdown',e=>{
+    if(e.pointerType==='mouse'){
+      hud.show();
+      return
+    }
+    if(tapState.id!==-1)clearTimeout(tapState.timer);
+    tapState.id=e.pointerId;
+    tapState.x=e.clientX;
+    tapState.y=e.clientY;
+    tapState.moved=false;
+    tapState.long=false;
+    tapState.timer=setTimeout(()=>{
+      tapState.long=true;
+      openRadial(tapState.x,tapState.y)
+    },HUD.longPressMs)
+  });
+  canvas.addEventListener('pointermove',e=>{
+    if(e.pointerId!==tapState.id)return;
+    if(Math.abs(e.clientX-tapState.x)>HUD.tapSlack||Math.abs(e.clientY-tapState.y)>HUD.tapSlack){
+      tapState.moved=true;
+      clearTimeout(tapState.timer)
+    }
+  });
+  canvas.addEventListener('pointerup',e=>{
+    if(e.pointerId!==tapState.id)return;
+    clearTimeout(tapState.timer);
+    const wasLong=tapState.long,
+    moved=tapState.moved,
+    now=performance.now();
+    tapState.id=-1;
+    if(wasLong||moved||now-sheetClosedAt<450)return;
+    const isDouble=now-lastTapAt<=HUD.doubleTapMs&&Math.abs(e.clientX-lastTapX)<=48&&Math.abs(e.clientY-lastTapY)<=48;
+    lastTapAt=now;
+    lastTapX=e.clientX;
+    lastTapY=e.clientY;
+    if(isDouble){
+      clearTimeout(tapState.pending);
+      tapState.pending=0;
+      lastTapAt=0;
+      cycleVideoLevel();
+      return
+    }
+    if(hud.hidden){
+      hud.show();
+      return
+    }
+    clearTimeout(tapState.pending);
+    tapState.pending=setTimeout(()=>{
+      tapState.pending=0;
+      hud.toggle()
+    },240)
+  });
+  canvas.addEventListener('pointercancel',e=>{
+    if(e.pointerId!==tapState.id)return;
+    clearTimeout(tapState.timer);
+    tapState.id=-1
+  });
+  function dismissHint(){
+    const hint=$('#centerhint');
+    if(!hint||hint.hidden)return;
+    hint.hidden=true;
+    uiMemory.hintSeen=true;
+    writeStorageJSON('psyco_visao_ui',uiMemory)
+  }
+  if(uiMemory.hintSeen)$('#centerhint').hidden=true;
+  let motionWakeAttached=false,
+  motionPermissionAsked=false;
+  function attachMotionWake(){
+    if(motionWakeAttached)return;
+    motionWakeAttached=true;
+    let lastMagnitude=0;
+    window.addEventListener('devicemotion',e=>{
+      const acc=e.accelerationIncludingGravity||e.acceleration;
+      if(!acc)return;
+      const magnitude=Math.sqrt((acc.x||0)*(acc.x||0)+(acc.y||0)*(acc.y||0)+(acc.z||0)*(acc.z||0)),
+      delta=Math.abs(magnitude-lastMagnitude);
+      lastMagnitude=magnitude;
+      if(delta>3.5){
+        hud.noteActivity();
+        if(hud.hidden)hud.show()
+      }
+    })
+  }
+  function requestMotionPermission(){
+    const DME=window.DeviceMotionEvent;
+    if(!DME)return;
+    if(typeof DME.requestPermission!=='function'){
+      attachMotionWake();
+      return
+    }
+    if(motionPermissionAsked)return;
+    motionPermissionAsked=true;
+    try{
+      DME.requestPermission().then(state=>{
+        if(state==='granted')attachMotionWake()
+      }).catch(()=>{})
+    }
+    catch{}
+  }
+  window.addEventListener('pointerdown',()=>{
+    dismissHint();
+    hud.noteActivity();
+    requestMotionPermission()
+  },true);
+  window.addEventListener('pointermove',e=>{
+    if(e.pointerType==='mouse')hud.noteActivity()
+  },{
+    passive:true
+  });
+  window.addEventListener('keydown',e=>{
+    hud.noteActivity();
+    if(e.key==='h'||e.key==='H'||e.key==='Tab'){
+      hud.show();
+      return
+    }
+    if(e.key==='Escape'){
+      if(!radial.hidden)closeRadial();
+      else if($('#panel').classList.contains('show'))closeSheet()
+    }
+  });
   $('#about').onclick=()=>$('#aboutText').hidden=!$('#aboutText').hidden;
   function refreshDeviceDiagnostics(){
     const report=$('#diagnosticReport'),
@@ -1273,12 +980,20 @@ from './renderers.js';
     'Câmera: '+(cameraApi?cameraState:'API indisponível')+(video.readyState>=2?' · imagem recebida':''),
     'Microfone: '+($('#micEnable').checked?'ativado':'desativado · opcional'),
     'Toque: '+(('ontouchstart' in window||navigator.maxTouchPoints>0)?'disponível':'não detectado'),
-    'Movimento reduzido: '+(reducedMotionQuery?.matches?'ativado':'desativado'),
+    'Animação reduzida pelo sistema: '+(reducedMotionQuery?.matches?'ativado':'desativado'),
+    'Análise do movimento: '+ANALYSIS_WIDTH+' × '+ANALYSIS_HEIGHT,
+    'Campo do sonar: '+sonar.width+' × '+sonar.height,
+    'Escala de render: '+dpr.toFixed(2)+' (adaptativa '+adaptiveScale.toFixed(2)+')',
     'Armazenamento local: '+storage,
-    'Vídeo selecionado: '+activeVideoLevel.toUpperCase()].join('\n');
+    'Vídeo selecionado: '+activeVideoLevel.toUpperCase(),
+    'Dica inicial: '+(uiMemory.hintSeen?'dispensada':'ainda visível')].join('\n');
     report.hidden=false
   }
-  $('#diagnosticRun').onclick=refreshDeviceDiagnostics;
+  $('#diagnosticRun').onclick=()=>{
+    openSheet();
+    activateTab('system');
+    refreshDeviceDiagnostics()
+  };
   $('#diagnosticCamera').onclick=async()=>{
     if(!isSecureContext){
       refreshDeviceDiagnostics();
@@ -1293,24 +1008,21 @@ from './renderers.js';
     }
     catch{}
   };
-  setTimeout(()=>{
-    if(!$('#panel').classList.contains('show'))document.body.classList.add('sleeping')
-  },9000);
   $('#micEnable').onchange=async e=>{
     if(!e.target.checked){
       micStream?.getTracks().forEach(t=>t.stop());
       micStream=null;
       analyser=null;
-      soundRevealSmooth=0;
       audioCtx?.close();
       audioCtx=null;
       audioState.fill(0);
       audioState[10]=.006;
+      bandsSmooth.fill(0);
+      bandsMax.fill(1e-6);
       updateMicState('off');
       notify('O sonho ficou em silêncio.');
       return
     }
-    soundRevealSmooth=0;
     updateMicState('loading');
     try{
       console.info('[Psyco_Visão][AUDIO] Solicitando acesso ao microfone; contexto seguro='+isSecureContext);
@@ -1323,8 +1035,8 @@ from './renderers.js';
       await audioCtx.resume();
       const src=audioCtx.createMediaStreamSource(micStream);
       analyser=audioCtx.createAnalyser();
-      analyser.fftSize=1024;
-      analyser.smoothingTimeConstant=.15;
+      analyser.fftSize=512;
+      analyser.smoothingTimeConstant=0;
       src.connect(analyser);
       freqData.fill(-120);
       timeData.fill(0);
@@ -1335,6 +1047,8 @@ from './renderers.js';
       noiseSum=0;
       noiseFrames=0;
       bassMax=midMax=trebleMax=1e-6;
+      bandsMax.fill(1e-6);
+      bandsSmooth.fill(0);
       audioState.fill(0);
       audioState[10]=.006;
       const activeMicTrack=micStream.getAudioTracks()[0];
@@ -1351,7 +1065,6 @@ from './renderers.js';
       micStream?.getTracks().forEach(t=>t.stop());
       micStream=null;
       analyser=null;
-      soundRevealSmooth=0;
       audioCtx?.close();
       audioCtx=null;
       console.error('[Psyco_Visão][AUDIO] Falha na captura',err);
@@ -1359,10 +1072,6 @@ from './renderers.js';
       updateMicState('error');
       notify(err.name==='NotAllowedError'?'Permita o microfone nas configurações do navegador.':err.name==='NotFoundError'?'Não encontramos um microfone neste aparelho.':err.name==='NotReadableError'?'O microfone pode estar sendo usado por outro aplicativo. Feche esse aplicativo e tente de novo.':'Não foi possível ligar o som. Confira a permissão do microfone e tente outra vez.')
     }
-  };
-  $('#fullscreen').onclick=()=>{
-    if(!document.fullscreenElement)document.documentElement.requestFullscreen?.().catch(()=>notify('A tela cheia não está disponível neste aparelho.'));
-    else document.exitFullscreen?.()
   };
   $('#copyLink').onclick=async()=>{
     try{
@@ -1391,8 +1100,31 @@ from './renderers.js';
     notify('Para abrir o olho, use o endereço seguro do Vercel ou localhost.')
   }
   document.addEventListener('visibilitychange',()=>{
-    if(document.visibilityState!=='visible')return;
+    if(document.visibilityState==='hidden'){
+      if(raf){
+        cancelAnimationFrame(raf);
+        raf=0
+      }
+      if(audioCtx?.state==='running')audioCtx.suspend().catch(()=>{});
+      video.pause?.();
+      clearTimeout(hiddenStopTimer);
+      hiddenStopTimer=setTimeout(()=>{
+        if(document.visibilityState!=='hidden'||!stream)return;
+        const stale=stream;
+        started=false;
+        stream=null;
+        video.srcObject=null;
+        stale.getTracks().forEach(t=>t.stop());
+        updateCameraState('off','A câmera volta quando a página reaparecer.')
+      },2000);
+      return
+    }
+    clearTimeout(hiddenStopTimer);
     if(audioCtx?.state==='suspended')audioCtx.resume().catch(()=>notify('A escuta precisa ser ligada de novo.'));
+    if(!raf){
+      last=0;
+      raf=requestAnimationFrame(draw)
+    }
     if(!started||!stream||stream.getVideoTracks().some(t=>t.readyState!=='live')){
       if(cameraState!=='denied'&&!cameraBusy)scheduleCameraRecovery({
         name:'NotReadableError'

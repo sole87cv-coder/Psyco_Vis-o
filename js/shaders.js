@@ -3,33 +3,29 @@ import {
   PRESET_PROFILES
 }
 from './config.js';
+import {
+  clamp
+}
+from './utils.js';
 export function getDreamShader(mode,preset,t,reducedMotion=false){
-  const reduced=!!reducedMotion,
-  drift=reduced?0:Math.sin(t*.00012)*8,
-  m=MODE_PROFILES[mode]||MODE_PROFILES.both,
-  p=PRESET_PROFILES[preset]||PRESET_PROFILES.bat;
-  const hue=Number(m.filter.match(/hue-rotate\((-?\d+(?:\.\d+)?)deg\)/)?.[1]||0),
-  contrast=Number(m.filter.match(/contrast\(([^)]+)\)/)?.[1]||1),
-  saturation=Number(m.filter.match(/saturate\(([^)]+)\)/)?.[1]||1),
-  brightness=Number(m.filter.match(/brightness\(([^)]+)\)/)?.[1]||1);
-  const filter=mode==='abstract'?'none':m.filter.replace(/hue-rotate\((-?\d+(?:\.\d+)?)deg\)/,'hue-rotate('+Math.round(hue+p.hue+(preset==='delirium'?drift:0))+'deg)').replace(/contrast\(([^)]+)\)/,
-  'contrast('+Math.min(3,contrast*p.contrast).toFixed(2)+')').replace(/saturate\(([^)]+)\)/,
-  'saturate('+Math.min(1.6,saturation*p.saturation).toFixed(2)+')').replace(/brightness\(([^)]+)\)/,
-  'brightness('+Math.min(.98,brightness*p.brightness).toFixed(2)+')');
+  const m=MODE_PROFILES[mode]||MODE_PROFILES.both,
+  p=PRESET_PROFILES[preset]||PRESET_PROFILES.bat,
+  reduced=!!reducedMotion,
+  drift=reduced?0:Math.sin(t*.00012)*.05;
   return{
     mode,
-    filter,
-    smokeAlpha:m.smokeAlpha,
-    smokeBlur:m.smokeBlur,
-    contourAlpha:m.contourAlpha,
-    meshAlpha:m.meshAlpha,
-    pulseAlpha:m.pulseAlpha,
-    imageAlpha:m.imageAlpha,
-    imageContrast:m.imageContrast,
-    imageSaturation:m.imageSaturation,
-    imageBlend:m.imageBlend,
-    persistence:p.persistence,
     reduced,
-    drift
-  };
+    decay:clamp(p.decay+(preset==='delirium'?drift*.02:0),.9,.965),
+    speed:p.speed*(reduced?.8:1),
+    ringGain:m.ringGain,
+    ringWidth:m.ringWidth,
+    edgeDeform:m.edgeDeform,
+    edgeGain:m.edgeGain,
+    dotGain:m.dotGain*p.dotGain*(reduced?.5:1),
+    reflectionGain:reduced?m.reflectionGain*.4:m.reflectionGain,
+    videoGain:m.videoGain,
+    breathRate:p.breathRate,
+    breathDepth:p.breathDepth*(reduced?.6:1),
+    amberMix:clamp(p.amberMix+drift*(preset==='delirium'?.6:.15),0,1)
+  }
 }

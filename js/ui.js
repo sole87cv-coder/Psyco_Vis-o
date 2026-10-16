@@ -42,3 +42,66 @@ export function renderVideoLevelState(buttons, label, body, level) {
 export function bindVideoLevelButtons(buttons,onChange){
   for(const button of buttons)button.addEventListener('click',()=>onChange(button.dataset.videoLevel));
 }
+export function createHud({
+  idleMs=2500
+}
+={
+}) {
+  const body=document.body;
+  let timer=0,
+  held=false,
+  errorKind='',
+  current=body.dataset.hud||'visible';
+  const apply=next=>{
+    if(current===next)return;
+    current=next;
+    body.dataset.hud=next
+  };
+  const schedule=()=>{
+    clearTimeout(timer);
+    if(held)return;
+    timer=setTimeout(()=>apply('hidden'),idleMs)
+  };
+  const show=()=>{
+    apply(errorKind?'error':'visible');
+    schedule()
+  };
+  const hud={
+    show,
+    hide(){
+      apply('hidden')
+    },
+    toggle(){
+      if(current==='hidden')show();
+      else hud.hide()
+    },
+    noteActivity(){
+      if(current==='hidden'||held)return;
+      schedule()
+    },
+    setError(kind){
+      errorKind=kind||'geral';
+      apply('error');
+      schedule()
+    },
+    clearError(kind){
+      if(errorKind&&kind&&errorKind!==kind)return;
+      errorKind='';
+      if(current==='error')apply('visible');
+      schedule()
+    },
+    hold(on){
+      held=!!on;
+      if(held)clearTimeout(timer);
+      else schedule()
+    },
+    get hidden(){
+      return current==='hidden'
+    },
+    get error(){
+      return!!errorKind
+    }
+  };
+  schedule();
+  return hud
+}

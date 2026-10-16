@@ -1,93 +1,93 @@
 export const VIDEO_LEVELS = Object.freeze({
-  oculto: 0, sutil: 0.20, visivel: 0.55
+  oculto: 0, sutil: 0.12, visivel: 0.35
 });
 export const CONTROL_IDS = Object.freeze(['green','edge','wave','fish','glitch','trail','sens','vivid','gate','smoothing','mode']);
-export const MOTION_QUALITY = Object.freeze([{
-  width:480,height:270
-},{
-  width:360,height:203
-},{
-  width:256,height:144
-}]);
+export const ANALYSIS_WIDTH = 160;
+export const ANALYSIS_HEIGHT = 120;
+export const FIELD_PIXELS = Object.freeze({
+  celular: 128000, computador: 320000
+});
+export const DPR_CAP = Object.freeze({
+  celular: 1.5, computador: 2.0
+});
+export const HUD = Object.freeze({
+  idleMs: 2500, longPressMs: 500, doubleTapMs: 300, tapSlack: 12
+});
+export const PERF = Object.freeze({
+  slowMs: 16, slowWindowMs: 1000, downscale: 0.85, restoreMs: 10, restoreWindowMs: 3000, upscale: 1.18, minScale: 0.55
+});
+export const BAND_EDGES = Object.freeze([60,150,300,600,1200,2400,4800,9600,14000]);
 export const DEFAULT_VIDEO_LEVEL = 'sutil';
 export const DEFAULT_PRESET = 'bat';
 export const MODE_PROFILES = {
   silhouette:{
-    smokeAlpha:.52,
-    smokeBlur:15,
-    contourAlpha:0,
-    meshAlpha:0,
-    pulseAlpha:.78,
-    imageAlpha:1,
-    imageContrast:1.82,
-    imageSaturation:.72,
-    imageBlend:'screen',
-    filter:'grayscale(1) contrast(1.14) sepia(.58) hue-rotate(162deg) saturate(.72) brightness(.88)'
+    ringGain:1,
+    ringWidth:1.25,
+    edgeDeform:1,
+    edgeGain:1.15,
+    dotGain:.55,
+    reflectionGain:.75,
+    videoGain:1
   },
   outline:{
-    smokeAlpha:0,
-    smokeBlur:0,
-    contourAlpha:1.08,
-    meshAlpha:0,
-    pulseAlpha:.48,
-    imageAlpha:.34,
-    imageContrast:2.9,
-    imageSaturation:.18,
-    imageBlend:'lighter',
-    filter:'grayscale(1) contrast(2.4) sepia(.16) hue-rotate(172deg) saturate(.45) brightness(1.18)'
+    ringGain:.92,
+    ringWidth:.6,
+    edgeDeform:1.5,
+    edgeGain:1.5,
+    dotGain:.75,
+    reflectionGain:.9,
+    videoGain:.8
   },
   both:{
-    smokeAlpha:.29,
-    smokeBlur:12,
-    contourAlpha:.64,
-    meshAlpha:0,
-    pulseAlpha:.64,
-    imageAlpha:.80,
-    imageContrast:2.05,
-    imageSaturation:.42,
-    imageBlend:'screen',
-    filter:'grayscale(1) contrast(1.25) sepia(.48) hue-rotate(168deg) saturate(.66) brightness(.86)'
+    ringGain:1,
+    ringWidth:1,
+    edgeDeform:1.2,
+    edgeGain:1.3,
+    dotGain:.7,
+    reflectionGain:.85,
+    videoGain:1
   },
   abstract:{
-    smokeAlpha:0,
-    smokeBlur:0,
-    contourAlpha:0,
-    meshAlpha:.44,
-    pulseAlpha:.20,
-    imageAlpha:.38,
-    imageContrast:1.3,
-    imageSaturation:.3,
-    imageBlend:'lighter',
-    filter:'none'
+    ringGain:1.12,
+    ringWidth:1.3,
+    edgeDeform:.55,
+    edgeGain:.75,
+    dotGain:.5,
+    reflectionGain:.35,
+    videoGain:0
   }
 };
 export const PRESET_PROFILES = {
   bat:{
-    hue:0,
-    contrast:1,
-    saturation:1,
-    brightness:1,
-    persistence:1.25
+    decay:.905,
+    speed:1.3,
+    amberMix:.16,
+    breathRate:1,
+    breathDepth:.4,
+    dotGain:1
   },
   deep:{
-    hue:34,
-    contrast:1.08,
-    saturation:1.16,
-    brightness:.94,
-    persistence:1.9
+    decay:.948,
+    speed:.9,
+    amberMix:.06,
+    breathRate:.7,
+    breathDepth:.6,
+    dotGain:.7
   },
   delirium:{
-    hue:-44,
-    contrast:.92,
-    saturation:.92,
-    brightness:.88,
-    persistence:2.25
+    decay:.928,
+    speed:1.5,
+    amberMix:.42,
+    breathRate:1.25,
+    breathDepth:.35,
+    dotGain:1.35
   },
   breath:{
-    hue:-8,
-    contrast:.82,
-    saturation:.72,
-    brightness:.92,
-    persistence:3.1
+    decay:.962,
+    speed:.72,
+    amberMix:.03,
+    breathRate:.55,
+    breathDepth:.75,
+    dotGain:.55
   }
 };

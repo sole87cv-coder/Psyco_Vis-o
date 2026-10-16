@@ -1,45 +1,42 @@
-export function measureAudioBands(timeData, frequencyData, sampleRate) {
+import {
+  BAND_EDGES
+}
+from './config.js';
+export function measureAudioBands(timeData,frequencyData,sampleRate,bands=new Float32Array(8)) {
   let sum=0,
   peak=0;
-  for(const value of timeData){
-    const magnitude=Math.abs(value);
+  for(let i=0;i<timeData.length;i++){
+    const value=timeData[i];
     sum+=value*value;
-    peak=Math.max(peak,magnitude);
+    const magnitude=value<0?-value:value;
+    if(magnitude>peak)peak=magnitude
   }
   const nyquist=sampleRate*.5,
-  n=frequencyData.length,
-  b0=Math.max(1,Math.floor(20/nyquist*n)),
-  b1=Math.min(n,Math.ceil(250/nyquist*n)),
-  m1=Math.min(n,Math.ceil(2000/nyquist*n)),
-  t1=Math.min(n,Math.ceil(8000/nyquist*n));
-  let bass=0,
-  mid=0,
-  treble=0,
-  dominantMag=0,
-  dominantBin=1;
-  const accumulate=(start,
-  end)=>{
+  bins=frequencyData.length;
+  for(let band=0;band<8;band++){
+    const start=Math.max(1,Math.floor(BAND_EDGES[band]/nyquist*bins)),
+    end=Math.max(start+1,Math.min(bins,Math.ceil(BAND_EDGES[band+1]/nyquist*bins)));
     let total=0;
-    for(let i=start;i<end;i++){
-      const mag=10**(frequencyData[i]/20);
-      total+=mag;
-      if(mag>dominantMag){
-        dominantMag=mag;
-        dominantBin=i;
-      }
+    for(let i=start;i<end;i++)total+=10**(frequencyData[i]/20);
+    bands[band]=total/(end-start)
+  }
+  let dominantMagnitude=0,
+  dominantBin=1;
+  for(let i=1;i<bins;i++){
+    const magnitude=10**(frequencyData[i]/20);
+    if(magnitude>dominantMagnitude){
+      dominantMagnitude=magnitude;
+      dominantBin=i
     }
-    return total/(end-start||1);
-  };
-  bass=accumulate(b0,b1);
-  mid=accumulate(b1,m1);
-  treble=accumulate(m1,t1);
-  return {
+  }
+  return{
     rms:Math.sqrt(sum/(timeData.length||1)),
     peak,
-    bass,
-    mid,
-    treble,
+    bands,
+    bass:(bands[0]+bands[1])*.5,
+    mid:(bands[2]+bands[3]+bands[4]+bands[5])*.25,
+    treble:(bands[6]+bands[7])*.5,
     dominantBin,
     nyquist
-  };
+  }
 }

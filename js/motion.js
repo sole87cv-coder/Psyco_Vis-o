@@ -2,8 +2,37 @@ import {
   clamp
 }
 from './utils.js';
-export function analyzeMotionFrame(current, previous, output, width, height, edge, collectBounds=false) {
-  const threshold=16+(1-edge)*28;
+export function createMotionState(width,height) {
+  return{
+    width,
+    height,
+    luma:new Float32Array(width*height),
+    previous:new Float32Array(width*height),
+    motion:new Float32Array(width*height),
+    edge:new Float32Array(width*height),
+    hasPrevious:false,
+    activity:0,
+    edgeRatio:1,
+    box:null
+  }
+}
+export function resetMotionState(state) {
+  state.previous.fill(0);
+  state.motion.fill(0);
+  state.edge.fill(0);
+  state.hasPrevious=false;
+  state.activity=0;
+  state.edgeRatio=1;
+  state.box=null
+}
+export function analyzeMotionFrame(source,state,edgeControl=.58,collectBounds=true) {
+  const width=state.width,
+  height=state.height,
+  luma=state.luma,
+  previous=state.previous,
+  motion=state.motion,
+  edge=state.edge,
+  count=width*height;
   let activitySum=0,
   activePixels=0,
   edgePixels=0,
@@ -11,28 +40,40 @@ export function analyzeMotionFrame(current, previous, output, width, height, edg
   minY=height,
   maxX=-1,
   maxY=-1;
-  for(let pixel=0,offset=0;pixel<previous.length;pixel++,offset+=4){
-    const luminance=current[offset]*.299+current[offset+1]*.587+current[offset+2]*.114,
-    difference=Math.abs(luminance-previous[pixel]);
-    previous[pixel]=luminance;
-    const activity=clamp((difference-threshold)/(88-threshold),0,1);
-    activitySum+=activity;
-    if(collectBounds&&activity>=.08){
-      const x=pixel%width,
-      y=Math.floor(pixel/width);
-      activePixels++;
-      minX=Math.min(minX,x);
-      maxX=Math.max(maxX,x);
-      minY=Math.min(minY,y);
-      maxY=Math.max(maxY,y);
-      if(x<width*.06||x>width*.94||y<height*.07||y>height*.93)edgePixels++;
+  for(let i=0,offset=0;i<count;i++,offset+=4)luma[i]=source[offset]*.299+source[offset+1]*.587+source[offset+2]*.114;
+  const motionThreshold=16+(1-edgeControl)*28,
+  edgeThreshold=26-edgeControl*22,
+  inverseSpan=1/(88-motionThreshold),
+  leftLimit=width*.06,
+  rightLimit=width*.94,
+  topLimit=height*.07,
+  bottomLimit=height*.93;
+  for(let y=0;y<height;y++){
+    const row=y*width;
+    for(let x=0;x<width;x++){
+      const i=row+x,
+      difference=Math.abs(luma[i]-previous[i]),
+      activity=clamp((difference-motionThreshold)*inverseSpan,0,1),
+      smoothed=activity>motion[i]?activity:motion[i]*.86;
+      motion[i]=smoothed;
+      const gradient=(x+1<width?Math.abs(luma[i]-luma[i+1]):0)+(y+1<height?Math.abs(luma[i]-luma[i+width]):0);
+      edge[i]=clamp((gradient-edgeThreshold)*.24,0,1);
+      activitySum+=activity;
+      if(collectBounds&&smoothed>=.08){
+        activePixels++;
+        if(x<minX)minX=x;
+        if(x>maxX)maxX=x;
+        if(y<minY)minY=y;
+        if(y>maxY)maxY=y;
+        if(x<leftLimit||x>rightLimit||y<topLimit||y>bottomLimit)edgePixels++
+      }
     }
-    output[offset]=72;
-    output[offset+1]=255;
-    output[offset+2]=150;
-    output[offset+3]=Math.round((collectBounds?clamp((activity-.05)*2.6,0,1):activity)*205);
   }
-  const box=activePixels?{
+  previous.set(luma);
+  state.hasPrevious=true;
+  state.activity=activitySum/count;
+  state.edgeRatio=activePixels?edgePixels/activePixels:1;
+  state.box=activePixels?{
     left:minX,
     top:minY,
     right:maxX+1,
@@ -43,11 +84,5 @@ export function analyzeMotionFrame(current, previous, output, width, height, edg
     cy:(minY+maxY+1)/2
   }
   :null;
-  return {
-    activity:activitySum/previous.length,
-    activePixels,
-    edgeRatio:activePixels?edgePixels/activePixels:1,
-    box,
-    aspect:box?box.height/box.width:0
-  };
+  return state
 }
