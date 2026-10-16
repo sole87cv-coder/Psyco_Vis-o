@@ -1,7 +1,6 @@
-<<<<<<< HEAD
 # Psyco_Visão
 
-Experiência web responsiva da obra **“um dispositivo para ver através do sono”**. A página prioriza celular, preserva a imagem em vídeo e inicia em **SUTIL**. Câmera e análise opcional de áudio rodam localmente no navegador.
+Experiência web responsiva da obra **"um dispositivo para ver através do sono"**. A página prioriza celular, preserva a imagem em vídeo e inicia em **SUTIL**. Câmera e análise opcional de áudio rodam localmente no navegador.
 
 ## Executar e publicar manualmente
 
@@ -36,6 +35,9 @@ Requer navegador moderno com módulos ES, Canvas 2D e `getUserMedia`; câmera e 
 - `renderers.js`: composição reutilizável de camadas no Canvas.
 - `utils.js`: limites numéricos e acesso seguro ao armazenamento local.
 - `SHADERS.md`: catálogo visual e guia para evolução de efeitos.
+- `vercel.json`: configuração de publicação estática (Vercel, framework *Other*).
+- `Testar-Psyco_Visão.bat`: atalho Windows para iniciar o servidor local.
+- `scripts/testar_local.py`: servidor HTTP sem dependências para teste em `127.0.0.1`.
 
 ## Presets e extensão
 
@@ -45,7 +47,7 @@ Os presets Atento, Profundo, Brilhante e Calmo selecionam uma combinação exist
 
 - **Câmera bloqueada:** permita câmera nas permissões do site e recarregue. Se a câmera estiver ocupada, feche o outro aplicativo.
 - **Sem câmera disponível:** verifique o seletor do aparelho e reconecte a câmera; a interface mantém seus estados de erro e recuperação.
-- **Microfone sem reação:** habilite “Ligar o som”, permita o microfone e confira se outro aplicativo não o está usando. A captura de áudio é opcional.
+- **Microfone sem reação:** habilite "Ligar o som", permita o microfone e confira se outro aplicativo não o está usando. A captura de áudio é opcional.
 - **Página aberta por `file://`:** use localhost ou HTTPS, pois arquivos locais não recebem acesso confiável aos dispositivos.
 - **Tela pausada em segundo plano:** retorne à página; o navegador pode suspender a captura ou o contexto de áudio e exigir recuperação/permissão.
 
@@ -64,7 +66,3 @@ O projeto é estático: `index.html`, CSS e módulos JavaScript são publicados 
 - Output Directory: `.`.
 
 O arquivo `vercel.json` define **Other**, a saída na raiz e mantém a remoção de `.html` e barra final. A conexão com GitHub, a branch de produção, o domínio e as regras de implantação pertencem ao painel da conta Vercel; esta preparação não cria o projeto nem publica o site.
-=======
-# Psyco_Vis-o
-Interative Art.
->>>>>>> 83aff552a8067f569bd10b984e7c985c1a083b71
