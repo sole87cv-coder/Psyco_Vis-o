@@ -10,6 +10,14 @@ export const FIELD_PIXELS = Object.freeze({
 export const DPR_CAP = Object.freeze({
   celular: 1.5, computador: 2.0
 });
+export const MOBILE = Object.freeze({
+  dprMax: 1.5,
+  resizeDebounceMs: 120,
+  keyboardIgnoreRatio: 0.4,
+  quarterTurnAspect: Object.freeze({
+    portraitMin: 1.15, landscapeMax: 0.87
+  })
+});
 export const HUD = Object.freeze({
   idleMs: 2500, longPressMs: 500, doubleTapMs: 300, tapSlack: 12
 });

@@ -5,6 +5,7 @@ import {
   ANALYSIS_HEIGHT,
   FIELD_PIXELS,
   DPR_CAP,
+  MOBILE,
   HUD,
   PERF,
   DEFAULT_VIDEO_LEVEL,
@@ -107,6 +108,16 @@ from './renderers.js';
   cameraGestureArmed=false,
   envelope=0,
   lastEnvelope=0;
+  const isMobile=cameraContext==='mobile';
+  const mobileOrientationQuery=isMobile&&window.matchMedia?{
+    portrait:window.matchMedia('(orientation: portrait)'),
+    landscape:window.matchMedia('(orientation: landscape)')
+  }:null;
+  let mobileOrientation='',
+  mobileLastViewport=null,
+  mobileResizeTimer=0,
+  mobileResizeReason='viewport',
+  syncVideoCanvas=null;
   const saved=readStorageJSON('psyco_visao_settings',readStorageJSON('wut-settings'));
   const videoLevels=VIDEO_LEVELS,
   savedVisual=readStorageJSON('psyco_visao_visual',readStorageJSON('weburutao_visual')),
@@ -175,9 +186,111 @@ from './renderers.js';
   }
   bindVideoLevelButtons(document.querySelectorAll('[data-video-level]'),setVideoPresence);
   updateVideoLevelUI();
+  function viewportSize(){
+    const viewport=window.visualViewport;
+    if(viewport&&viewport.width>0&&viewport.height>0)return{
+      width:Math.round(viewport.width),height:Math.round(viewport.height)
+    };
+    const root=document.documentElement;
+    return{
+      width:root?.clientWidth||innerWidth,height:root?.clientHeight||innerHeight
+    }
+  }
+  function computeOrientation(){
+    const query=mobileOrientationQuery;
+    if(query?.portrait?.matches)return 'portrait';
+    if(query?.landscape?.matches)return 'landscape';
+    const viewport=viewportSize();
+    return viewport.height>=viewport.width?'portrait':'landscape'
+  }
+  function computeCoverMatrix(videoWidth,videoHeight,viewWidth,viewHeight){
+    if(!videoWidth||!videoHeight)return null;
+    const scale=Math.max(viewWidth/videoWidth,viewHeight/videoHeight)||1,
+    cropWidth=viewWidth/scale,
+    cropHeight=viewHeight/scale;
+    return{
+      scale,
+      x:(viewWidth-videoWidth*scale)/2,
+      y:(viewHeight-videoHeight*scale)/2,
+      cropX:(videoWidth-cropWidth)/2,
+      cropY:(videoHeight-cropHeight)/2,
+      cropWidth,
+      cropHeight
+    }
+  }
+  function computeQuarterTurn(){
+    if(!isMobile||!video.videoWidth||!video.videoHeight)return 0;
+    const aspect=video.videoWidth/video.videoHeight;
+    if(mobileOrientation==='portrait'&&aspect>MOBILE.quarterTurnAspect.portraitMin)return -90;
+    if(mobileOrientation==='landscape'&&aspect<MOBILE.quarterTurnAspect.landscapeMax)return 90;
+    return 0
+  }
+  function uprightVideoSource(){
+    const quarter=computeQuarterTurn();
+    if(!quarter)return video;
+    const videoWidth=video.videoWidth,
+    videoHeight=video.videoHeight;
+    if(!videoWidth||!videoHeight)return video;
+    if(!syncVideoCanvas)syncVideoCanvas=document.createElement('canvas');
+    if(syncVideoCanvas.width!==videoHeight||syncVideoCanvas.height!==videoWidth){
+      syncVideoCanvas.width=videoHeight;
+      syncVideoCanvas.height=videoWidth
+    }
+    const syncCtx=syncVideoCanvas.getContext('2d');
+    syncCtx.setTransform(1,0,0,1,0,0);
+    syncCtx.clearRect(0,0,syncVideoCanvas.width,syncVideoCanvas.height);
+    if(quarter<0){
+      syncCtx.translate(0,videoWidth);
+      syncCtx.rotate(-Math.PI/2)
+    }
+    else{
+      syncCtx.translate(videoHeight,0);
+      syncCtx.rotate(Math.PI/2)
+    }
+    syncCtx.drawImage(video,0,0,videoWidth,videoHeight);
+    return syncVideoCanvas
+  }
+  function scheduleMobileResize(reason='viewport'){
+    mobileResizeReason=reason;
+    clearTimeout(mobileResizeTimer);
+    mobileResizeTimer=setTimeout(applyMobileResize,MOBILE.resizeDebounceMs)
+  }
+  function applyMobileResize(){
+    if(!isMobile)return;
+    mobileResizeTimer=0;
+    const viewport=viewportSize();
+    if(viewport.width<8||viewport.height<8){
+      scheduleMobileResize(mobileResizeReason);
+      return
+    }
+    if(mobileResizeReason==='viewport'&&mobileLastViewport){
+      const widthDelta=Math.abs(viewport.width-mobileLastViewport.width),
+      heightDelta=Math.abs(viewport.height-mobileLastViewport.height);
+      if(widthDelta===0&&heightDelta>0&&heightDelta/mobileLastViewport.height<MOBILE.keyboardIgnoreRatio)return
+    }
+    mobileOrientation=computeOrientation();
+    document.body.dataset.mobileOrientation=mobileOrientation;
+    resize();
+    if(started&&loopActive)frame(performance.now())
+  }
+  function bindMobileOrientationEvents(){
+    const reapplyNow=()=>{
+      mobileResizeReason='orientation';
+      applyMobileResize();
+      scheduleMobileResize('viewport')
+    };
+    mobileOrientationQuery?.portrait.addEventListener?.('change',reapplyNow);
+    mobileOrientationQuery?.landscape.addEventListener?.('change',reapplyNow);
+    addEventListener('orientationchange',()=>scheduleMobileResize('orientation'));
+    window.visualViewport?.addEventListener('resize',()=>scheduleMobileResize('viewport'));
+    document.addEventListener('fullscreenchange',reapplyNow);
+    screen.orientation?.addEventListener?.('change',()=>{
+      document.body.dataset.screenOrientation=screen.orientation?.type||''
+    })
+  }
   function desiredFieldSize(){
-    const aspect=clamp(w/Math.max(1,h),.4,2.6),
-    small=innerWidth<=720,
+    const aspect=isMobile?Math.max(1,w)/Math.max(1,h):clamp(w/Math.max(1,h),.4,2.6),
+    small=isMobile||innerWidth<=720,
     budget=small?FIELD_PIXELS.celular:FIELD_PIXELS.computador,
     limit=small?720:1200;
     const height=clamp(Math.round(Math.sqrt(budget/aspect)),160,limit),
@@ -187,11 +300,21 @@ from './renderers.js';
     }
   }
   function resize(){
-    const small=innerWidth<=720,
-    cap=small?DPR_CAP.celular:DPR_CAP.computador;
-    dpr=Math.max(.75,Math.min(devicePixelRatio||1,cap)*adaptiveScale);
-    w=innerWidth;
-    h=innerHeight;
+    if(isMobile){
+      const viewport=viewportSize(),
+      cap=MOBILE.dprMax;
+      dpr=Math.max(.75,Math.min(devicePixelRatio||1,cap)*adaptiveScale);
+      w=viewport.width;
+      h=viewport.height;
+      mobileLastViewport=viewport
+    }
+    else{
+      const small=innerWidth<=720,
+      cap=small?DPR_CAP.celular:DPR_CAP.computador;
+      dpr=Math.max(.75,Math.min(devicePixelRatio||1,cap)*adaptiveScale);
+      w=innerWidth;
+      h=innerHeight
+    }
     canvas.width=Math.round(w*dpr);
     canvas.height=Math.round(h*dpr);
     canvas.style.width=w+'px';
@@ -206,8 +329,13 @@ from './renderers.js';
       lastSilenceAt=performance.now()
     }
   }
-  addEventListener('resize',resize);
+  addEventListener('resize',isMobile?()=>scheduleMobileResize('viewport'):resize);
   resize();
+  if(isMobile){
+    mobileOrientation=computeOrientation();
+    document.body.dataset.mobileOrientation=mobileOrientation;
+    bindMobileOrientationEvents()
+  }
   const reducedMotionQuery=window.matchMedia?.('(prefers-reduced-motion: reduce)');
   let activeDreamPreset=['bat','deep','delirium','breath'].includes(saved.preset)?saved.preset:DEFAULT_PRESET;
   document.querySelectorAll('#presets .preset').forEach(button=>{
@@ -376,10 +504,19 @@ from './renderers.js';
     last=t;
     sampleAudio(t);
     const shader=getDreamShader($('#mode').value,activeDreamPreset,t,reducedMotionQuery?.matches);
-    const hasCam=video.readyState>=2&&video.videoWidth>0;
+    const hasCam=video.readyState>=2&&video.videoWidth>0,
+    videoSource=hasCam&&isMobile?uprightVideoSource():video;
     if(hasCam){
-      const crop=coverRect(video.videoWidth,video.videoHeight,ANALYSIS_WIDTH,ANALYSIS_HEIGHT);
-      motionReadCtx.drawImage(video,crop.sx,crop.sy,crop.sw,crop.sh,0,0,ANALYSIS_WIDTH,ANALYSIS_HEIGHT);
+      if(isMobile){
+        const sourceWidth=videoSource.videoWidth||videoSource.width,
+        sourceHeight=videoSource.videoHeight||videoSource.height,
+        matrix=computeCoverMatrix(sourceWidth,sourceHeight,w,h);
+        motionReadCtx.drawImage(videoSource,matrix.cropX,matrix.cropY,matrix.cropWidth,matrix.cropHeight,0,0,ANALYSIS_WIDTH,ANALYSIS_HEIGHT)
+      }
+      else{
+        const crop=coverRect(video.videoWidth,video.videoHeight,ANALYSIS_WIDTH,ANALYSIS_HEIGHT);
+        motionReadCtx.drawImage(video,crop.sx,crop.sy,crop.sw,crop.sh,0,0,ANALYSIS_WIDTH,ANALYSIS_HEIGHT)
+      }
       const frameData=motionReadCtx.getImageData(0,0,ANALYSIS_WIDTH,ANALYSIS_HEIGHT);
       if(analysisState.hasPrevious){
         analyzeMotionFrame(frameData.data,analysisState,+$('#edge').value/100,true);
@@ -428,7 +565,7 @@ from './renderers.js';
     let underlay=false;
     if(needsMask){
       dreamField.buildReveal(analysisState,mode==='abstract'||level==='oculto'?'visivel':level,edgeControl,shader,liveParams);
-      if(level!=='oculto')underlay=dreamField.renderUnderlay(video,shader,level)
+      if(level!=='oculto')underlay=dreamField.renderUnderlay(videoSource,shader,level)
     }
     if(mode==='abstract')dreamField.renderEchoEnergy(shader,analysisState,envelope,bandLive,liveParams,level,edgeControl);
     else if(mode==='silhouette')dreamField.renderSilhouette(shader,envelope,bandLive,liveParams);

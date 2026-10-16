@@ -384,6 +384,57 @@ garantido — se mexer no slider, a tela muda:
 Dica: para conferir um efeito isolado, ponha o slider no 0 e
 depois no 100 e observe o mesmo trecho por alguns segundos.
 
+4.15) ENQUADRAMENTO DA CÂMERA NO CELULAR (RETRATO × PAISAGEM)
+------------------------------------------------------------
+O computador e o celular têm caminhos SEPARADOS. Tudo que é
+específico do celular está protegido por `if(isMobile())` em
+js/app.js — no computador o comportamento é exatamente o de
+antes. Se for mexer, mexa SÓ nos trechos de celular.
+
+Como o site decide "celular" (uma vez, na abertura): olha o
+navegador (Android/iPhone/iPad); se não identificar, pergunta ao
+sistema se o toque é "grosso" (dedo) e a tela tem até 900 px —
+é a mesma função detectDeviceContext de js/camera.js (seção
+4.13). O resultado NÃO muda depois de abrir.
+
+Os números ficam em js/config.js -> MOBILE:
+  dprMax                1.5 — nitidez de render no celular
+                        (no computador continua 2.0)
+  resizeDebounceMs      120 — espera antes de reagir a um aviso
+                        de redimensionamento
+  keyboardIgnoreRatio   0.4 — teclado virtual: mudanças de altura
+                        menores que 40% são IGNORADAS (evita a
+                        tela "tremer" quando o teclado abre)
+  quarterTurnAspect     limites para detectar vídeo "deitado"
+                        numa tela em pé (aparelhos raros): 1.15
+                        (retrato) e 0.87 (paisagem)
+
+O que o site faz sozinho no celular:
+- Gira junto com a tela (retrato ↔ paisagem), sem esperar o
+  desenho seguinte; nunca reaproveita medidas antigas.
+- O sonho SEMPRE preenche a tela sem esticar nem achat a imagem:
+  a câmera é recortada pelo centro (fit-cover). Retrato corta as
+  laterais; paisagem corta em cima/baixo. O campo do sonho tem a
+  MESMA proporção da tela, então imagem, silhueta e revelação
+  ficam alinhadas (o som revela o mesmo ponto da imagem depois
+  de girar).
+- A análise de movimento continua fixa em 160 × 120 (seção 4.9);
+  só a área recortada acompanha a tela.
+- Teclado virtual: se a altura muda menos de 40% (teclado abre),
+  o desenho NÃO se reajusta; passando disso (ex.: navegador em
+  modo de tela reduzida), reajusta normalmente.
+- Tela cheia: entrar/sair reajusta o enquadramento nas duas
+  orientações.
+
+Onde mexer (js/app.js): resize() (tamanho do canvas no celular),
+desiredFieldSize() (tamanho do campo), computeCoverMatrix()
+(recorte central), computeOrientation() (retrato/paisagem);
+scheduleMobileResize/applyMobileResize cuidam do tempo de espera,
+e bindMobileOrientationEvents concentra todos os avisos do
+navegador (giro, redimensionamento, teclado, tela cheia). Se o
+site parecer "lento" ao girar, reduza resizeDebounceMs; se
+tremer demais com o teclado, aumente keyboardIgnoreRatio.
+
 ----------------------------------------------------------------
  5. GUARDAR VERSÕES (GIT) E PUBLICAR (VERCEL)
 ----------------------------------------------------------------

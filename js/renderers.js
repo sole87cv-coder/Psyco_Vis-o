@@ -635,8 +635,8 @@ export function createDreamEngine(){
     ectx.globalCompositeOperation='source-over'
   }
   function renderUnderlay(source,shader,level){
-    const sourceWidth=source.videoWidth,
-    sourceHeight=source.videoHeight;
+    const sourceWidth=source.videoWidth||source.width,
+    sourceHeight=source.videoHeight||source.height;
     if(!sourceWidth||!sourceHeight)return false;
     underCtx.globalCompositeOperation='source-over';
     underCtx.globalAlpha=1;
